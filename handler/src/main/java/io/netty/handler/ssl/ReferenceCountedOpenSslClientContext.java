@@ -28,8 +28,10 @@ import java.security.cert.X509Certificate;
 
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
+import java.util.Map;
 import java.util.Set;
 
 import javax.net.ssl.KeyManagerFactory;
@@ -164,6 +166,9 @@ public final class ReferenceCountedOpenSslClientContext extends ReferenceCounted
                 throw new SSLException("unable to setup trustmanager", e);
             }
             OpenSslClientSessionContext context = new OpenSslClientSessionContext(thiz, keyMaterialProvider);
+            // Enable session caching by default
+            context.setSessionCacheEnabled(true);
+
             keyMaterialProvider = null;
             return context;
         } finally {
@@ -184,44 +189,113 @@ public final class ReferenceCountedOpenSslClientContext extends ReferenceCounted
         }
     }
 
-    // No cache is currently supported for client side mode.
+    private static final class OpenSslClientSessionCache extends OpenSslSessionCache {
+        // TODO: Should we support to have a List of OpenSslSessions for a Host/Port key and so be able to
+        // support sessions for different protocols / ciphers to the same remote peer ?
+        private final Map<HostPort, OpenSslSession> sessions = new HashMap<HostPort, OpenSslSession>();
+
+        OpenSslClientSessionCache(OpenSslEngineMap engineMap) {
+            super(engineMap);
+        }
+
+        @Override
+        protected boolean sessionCreated(OpenSslSession session) {
+            assert Thread.holdsLock(this);
+            String host = session.getPeerHost();
+            int port = session.getPeerPort();
+            if (host == null || port == -1) {
+                return false;
+            }
+            HostPort hostPort = new HostPort(host, port);
+            if (sessions.containsKey(hostPort)) {
+                return false;
+            }
+            sessions.put(hostPort, session);
+            return true;
+        }
+
+        @Override
+        protected void sessionRemoved(OpenSslSession session) {
+            assert Thread.holdsLock(this);
+            String host = session.getPeerHost();
+            int port = session.getPeerPort();
+            if (host == null || port == -1) {
+                return;
+            }
+            sessions.remove(new HostPort(host, port));
+        }
+
+        private boolean isProtocolEnabled(OpenSslSession session, String[] enabledProtocols) {
+            return arrayContains(session.getProtocol(), enabledProtocols);
+        }
+
+        private boolean isCipherSuiteEnabled(OpenSslSession session, String[] enabledCipherSuites) {
+            return arrayContains(session.getCipherSuite(), enabledCipherSuites);
+        }
+
+        private static boolean arrayContains(String expected, String[] array) {
+            for (int i = 0; i < array.length; ++i) {
+                String value = array[i];
+                if (value.equals(expected)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        void setSession(ReferenceCountedOpenSslEngine engine) throws SSLException {
+            String host = engine.getPeerHost();
+            int port = engine.getPeerPort();
+            if (host == null || port == -1) {
+                return;
+            }
+            synchronized (this) {
+                OpenSslSession session = sessions.get(new HostPort(host, port));
+
+                // Check if we found something in the cache and if we found a session also ensure the protocol
+                // and ciphersuite can be used.
+                if (session == null ||
+                        !isProtocolEnabled(session, engine.getEnabledProtocols()) ||
+                        !isCipherSuiteEnabled(session, engine.getEnabledCipherSuites())) {
+                    return;
+                }
+                engine.setSession(session);
+            }
+        }
+
+        private static final class HostPort {
+            final String host;
+            final int port;
+
+            HostPort(String host, int port) {
+                this.host = host;
+                this.port = port;
+            }
+
+            @Override
+            public int hashCode() {
+                int result = host.hashCode();
+                result = 31 * result + port;
+                return result;
+            }
+
+            @Override
+            public boolean equals(Object obj) {
+                if (!(obj instanceof HostPort)) {
+                    return false;
+                }
+                HostPort other = (HostPort) obj;
+                return port == other.port && host.equalsIgnoreCase(other.host);
+            }
+        }
+    }
     static final class OpenSslClientSessionContext extends OpenSslSessionContext {
         OpenSslClientSessionContext(ReferenceCountedOpenSslContext context, OpenSslKeyMaterialProvider provider) {
-            super(context, provider);
+            super(context, provider, SSL.SSL_SESS_CACHE_CLIENT, new OpenSslClientSessionCache(context.engineMap));
         }
 
-        @Override
-        public void setSessionTimeout(int seconds) {
-            if (seconds < 0) {
-                throw new IllegalArgumentException();
-            }
-        }
-
-        @Override
-        public int getSessionTimeout() {
-            return 0;
-        }
-
-        @Override
-        public void setSessionCacheSize(int size)  {
-            if (size < 0) {
-                throw new IllegalArgumentException();
-            }
-        }
-
-        @Override
-        public int getSessionCacheSize() {
-            return 0;
-        }
-
-        @Override
-        public void setSessionCacheEnabled(boolean enabled) {
-            // ignored
-        }
-
-        @Override
-        public boolean isSessionCacheEnabled() {
-            return false;
+        void setSession(ReferenceCountedOpenSslEngine engine) throws SSLException {
+            ((OpenSslClientSessionCache) sessionCache).setSession(engine);
         }
     }
 

@@ -696,6 +696,7 @@ public abstract class ReferenceCountedOpenSslContext extends SslContext implemen
                 // May be null if it was destroyed in the meantime.
                 return CertificateVerifier.X509_V_ERR_UNSPECIFIED;
             }
+            engine.setupHandshakeSession();
             X509Certificate[] peerCerts = certificates(chain);
             try {
                 verify(engine, peerCerts, auth);

@@ -96,6 +96,10 @@ final class OpenSslJavaxX509Certificate extends X509Certificate {
         return bytes.clone();
     }
 
+    byte[] getBytes() {
+        return bytes;
+    }
+
     @Override
     public void verify(PublicKey key)
             throws CertificateException, NoSuchAlgorithmException, InvalidKeyException, NoSuchProviderException,

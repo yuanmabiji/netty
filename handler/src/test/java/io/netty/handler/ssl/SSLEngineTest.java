@@ -79,6 +79,7 @@ import java.security.cert.CertificateException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.Enumeration;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -106,6 +107,7 @@ import javax.net.ssl.SSLPeerUnverifiedException;
 import javax.net.ssl.SSLSession;
 import javax.net.ssl.SSLSessionBindingEvent;
 import javax.net.ssl.SSLSessionBindingListener;
+import javax.net.ssl.SSLSessionContext;
 import javax.net.ssl.SSLSocketFactory;
 import javax.net.ssl.TrustManager;
 import javax.net.ssl.TrustManagerFactory;
@@ -2866,6 +2868,70 @@ public abstract class SSLEngineTest {
             cleanupClientSslEngine(clientEngine);
             cleanupServerSslEngine(serverEngine);
             ssc.delete();
+        }
+    }
+
+    @Test
+    public void testSessionCacheForTLS12() throws Exception {
+        // This test only works for TLSv1.2 as TLSv1.3 will establish sessions after the handshake is done.
+        // See https://www.openssl.org/docs/man1.1.1/man3/SSL_CTX_sess_set_get_cb.html
+        if (protocolCipherCombo != ProtocolCipherCombo.TLSV12) {
+            return;
+        }
+        clientSslCtx = wrapContext(SslContextBuilder.forClient()
+                .trustManager(InsecureTrustManagerFactory.INSTANCE)
+                .sslProvider(sslClientProvider())
+                .sslContextProvider(clientSslContextProvider())
+                .protocols(protocols())
+                .ciphers(ciphers())
+                .build());
+        SelfSignedCertificate ssc = new SelfSignedCertificate();
+        serverSslCtx = wrapContext(SslContextBuilder.forServer(ssc.certificate(), ssc.privateKey())
+                .sslProvider(sslServerProvider())
+                .sslContextProvider(serverSslContextProvider())
+                .protocols(protocols())
+                .ciphers(ciphers())
+                .build());
+
+        try {
+            doHandshake("a.netty.io", 9999);
+            assertSessionCache(serverSslCtx.sessionContext(), 1);
+            assertSessionCache(clientSslCtx.sessionContext(), 1);
+            doHandshake("a.netty.io", 9999);
+            assertSessionCache(serverSslCtx.sessionContext(), 1);
+            assertSessionCache(clientSslCtx.sessionContext(), 1);
+            doHandshake("b.netty.io", 9999);
+            assertSessionCache(serverSslCtx.sessionContext(), 2);
+            assertSessionCache(clientSslCtx.sessionContext(), 2);
+        } finally {
+            ssc.delete();
+        }
+    }
+
+    private static void assertSessionCache(SSLSessionContext sessionContext, int numSessions) {
+        Enumeration<byte[]> ids = sessionContext.getIds();
+        int numIds = 0;
+        while (ids.hasMoreElements()) {
+            numIds++;
+            byte[] id = ids.nextElement();
+            assertNotEquals(0, id.length);
+            SSLSession session = sessionContext.getSession(id);
+            assertArrayEquals(id, session.getId());
+        }
+        assertEquals(numSessions, numIds);
+    }
+
+    private void doHandshake(String host, int port) throws Exception {
+        SSLEngine clientEngine = null;
+        SSLEngine serverEngine = null;
+        try {
+            clientEngine = wrapEngine(clientSslCtx.newEngine(UnpooledByteBufAllocator.DEFAULT, host, port));
+
+            serverEngine = wrapEngine(serverSslCtx.newEngine(UnpooledByteBufAllocator.DEFAULT));
+            handshake(clientEngine, serverEngine);
+        } finally {
+            cleanupClientSslEngine(clientEngine);
+            cleanupServerSslEngine(serverEngine);
         }
     }
 

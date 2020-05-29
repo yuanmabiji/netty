@@ -15,16 +15,31 @@
  */
 package io.netty.handler.ssl;
 
-import javax.net.ssl.SSLException;
 import javax.net.ssl.SSLSession;
+import java.security.cert.Certificate;
 
 interface OpenSslSession extends SSLSession {
 
+    OpenSslSessionId sessionId();
+
     /**
-     * Finish the handshake and so init everything in the {@link OpenSslSession} that should be accessible by
-     * the user.
+     * Returns {@code true} if this is a {@code NULL} session and so should be replaced once the
+     * handshake is in progress / finished, {@code false} otherwise.
      */
-    void handshakeFinished() throws SSLException;
+    boolean isNullSession();
+
+    /**
+     * Returns the native address (pointer) to {@code SSL_SESSION*} if any. Otherwise returns {@code -1}.
+     */
+    long nativeAddr();
+
+    /**
+     * Set the local certificate chain that is used.
+     */
+    void setLocalCertificate(Certificate[] localCertificate);
+
+    @Override
+    OpenSslSessionContext getSessionContext();
 
     /**
      * Expand (or increase) the value returned by {@link #getApplicationBufferSize()} if necessary.
@@ -33,4 +48,19 @@ interface OpenSslSession extends SSLSession {
      * @param packetLengthDataOnly The packet size which exceeds the current {@link #getApplicationBufferSize()}.
      */
     void tryExpandApplicationBufferSize(int packetLengthDataOnly);
+
+    /**
+     * Set the buffer size that is needed as a minimum to encrypt data.
+     */
+    void setPacketBufferSize(int packetBufferSize);
+
+    /**
+     * Update the last accessed time to the current {@link System#currentTimeMillis()}.
+     */
+    void updateLastAccessedTime();
+
+    /**
+     * Free the underlying native memory
+     */
+    long free();
 }
