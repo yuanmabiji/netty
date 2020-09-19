@@ -159,6 +159,8 @@ public class SimpleChannelPool implements ChannelPool {
 
     @Override
     public Future<Channel> acquire(final Promise<Channel> promise) {
+        // 这里直接调用acquireHealthyFromPoolOrNew方法，根据名字就可以知道先从池子拿连接，如果连接是健康的，那么说明可用，然后返回；
+        // 如果连接不健康，那么就重新创建一个健康的Channel连接吧
         return acquireHealthyFromPoolOrNew(checkNotNull(promise, "promise"));
     }
 
@@ -169,12 +171,19 @@ public class SimpleChannelPool implements ChannelPool {
      */
     private Future<Channel> acquireHealthyFromPoolOrNew(final Promise<Channel> promise) {
         try {
+            // 从channel连接池获取连接
             final Channel ch = pollChannel();
+            // 这里是懒加载的思想，把初始化延迟到使用时
+            // 如果获取的连接是null，那么说明连接池还没创建过channel连接，因此这里给创建一个
+            // TODO 【思考】这里创建连接后并没有马上把这个连接归还到连接池，想想这个连接什么时候会被归还到连接池呢？
             if (ch == null) {
                 // No Channel left in the pool bootstrap a new Channel
+                // 克隆一个bootstrap对象出来
                 Bootstrap bs = bootstrap.clone();
                 bs.attr(POOL_KEY, this);
+                // 调用connectChannel来获取一个Channel连接，注意这里是非阻塞的，调用完方法马上返回
                 ChannelFuture f = connectChannel(bs);
+                // 先判断下连接是否已经建立，若已经建立，那么调用notifyConnect方法
                 if (f.isDone()) {
                     notifyConnect(f, promise);
                 } else {
