@@ -171,7 +171,7 @@ public class SimpleChannelPool implements ChannelPool {
      */
     private Future<Channel> acquireHealthyFromPoolOrNew(final Promise<Channel> promise) {
         try {
-            // 从channel连接池获取连接
+            // 从连接池获取channel连接，即从deque队列中取出一个连接
             final Channel ch = pollChannel();
             // 这里是懒加载的思想，把初始化延迟到使用时
             // 如果获取的连接是null，那么说明连接池还没创建过channel连接，因此这里给创建一个
@@ -183,9 +183,12 @@ public class SimpleChannelPool implements ChannelPool {
                 bs.attr(POOL_KEY, this);
                 // 调用connectChannel来获取一个Channel连接，注意这里是非阻塞的，调用完方法马上返回
                 ChannelFuture f = connectChannel(bs);
-                // 先判断下连接是否已经建立，若已经建立，那么调用notifyConnect方法
+                // 先判断future是否已经返回，若已返回，那么调用notifyConnect来回调ChannelPoolHandler的channelAcquired方法
                 if (f.isDone()) {
                     notifyConnect(f, promise);
+                // 执行到这里，说明future还没拿到正在创建的channel连接，此时为该future添加一个ChannelFutureListener监听器
+                // 【重要】当channel连接创建完成时，会回调该监听器的operationComplete方法，到时再继续调用notifyConnect方法哈
+                // 【思考】这个回调逻辑是怎样是实现的呢？？
                 } else {
                     f.addListener(new ChannelFutureListener() {
                         @Override
@@ -194,9 +197,12 @@ public class SimpleChannelPool implements ChannelPool {
                         }
                     });
                 }
+                // 返回promise
                 return promise;
             }
+            // 代码执行到这里，表示从连接池获取了一个channel连接
             EventLoop loop = ch.eventLoop();
+            // 如果当前线程是loop的线程，那么就直接调用doHealthCheck方法来为这个连接做健康检查
             if (loop.inEventLoop()) {
                 doHealthCheck(ch, promise);
             } else {
@@ -214,13 +220,19 @@ public class SimpleChannelPool implements ChannelPool {
     }
 
     private void notifyConnect(ChannelFuture future, Promise<Channel> promise) throws Exception {
+        // 如果成功返回channel
         if (future.isSuccess()) {
+            // 拿到channel
             Channel channel = future.channel();
+            // 拿到channel后，回调ChannelPoolHandler的channelAcquired方法，
+            // 当成功获取到连接时，我们可以实现ChannelPoolHandler的channelAcquired方法实现相关业务逻辑，当获取到连接时该方法会被回调
             handler.channelAcquired(channel);
+            // 若promise.trySuccess(channel)返回false，则说明保证Promise在完成期间被调用了canceled等方法，此时需要释放刚才创建的连接
             if (!promise.trySuccess(channel)) {
                 // Promise was completed in the meantime (like cancelled), just release the channel again
                 release(channel);
             }
+        // 否则，调用保证promise的tryFailure方法
         } else {
             promise.tryFailure(future.cause());
         }
@@ -228,10 +240,13 @@ public class SimpleChannelPool implements ChannelPool {
 
     private void doHealthCheck(final Channel ch, final Promise<Channel> promise) {
         assert ch.eventLoop().inEventLoop();
-
+        // 对从连接池取出的连接做健康检查，接口ChannelHealthChecker内部有个默认叫ACTIVE的ChannelHealthChecker，
+        // 默认对调用channel.isActive()方法来做健康检查，举个栗子，对于NioSocketChannel来说，如果ch.isOpen()且ch.isConnected()的话，那么该通道就是健康的
         Future<Boolean> f = healthCheck.isHealthy(ch);
+        // 如果健康检查完毕，那么直接调用notifyHealthCheck方法来回调ChannelPoolHandler的channelAcquired方法等
         if (f.isDone()) {
             notifyHealthCheck(f, ch, promise);
+        // 如果健康检查还没完成，那么添加FutureListener监听器，等健康检查完毕时再回调notifyHealthCheck方法
         } else {
             f.addListener(new FutureListener<Boolean>() {
                 @Override
@@ -244,20 +259,30 @@ public class SimpleChannelPool implements ChannelPool {
 
     private void notifyHealthCheck(Future<Boolean> future, Channel ch, Promise<Channel> promise) {
         assert ch.eventLoop().inEventLoop();
-
+        // 如果获取的channel通道健康检查通过
         if (future.isSuccess()) {
             if (future.getNow()) {
                 try {
                     ch.attr(POOL_KEY).set(this);
                     handler.channelAcquired(ch);
+                    // 执行到这里说明获取的连接是健康的，回调setSuccess方法
                     promise.setSuccess(ch);
                 } catch (Throwable cause) {
+                    // 如果抛出异常，那么关闭channel连接
                     closeAndFail(ch, cause, promise);
                 }
+            // 如果获取的通道是不健康的，那么关闭通道；且重新递归调用acquireHealthyFromPoolOrNew方法来从连接池获取一个连接或新建一个连接，
+            // 总之方法执行到这里表明这个连接一定是从连接池拿出来的，此时这个拿出来的连接如果不可用，那么就新建一个连接
+            // TODO 【思考】假如从连接池拿出这个连接真的不可用，假如再调用acquireHealthyFromPoolOrNew去连接池拿连接时无可用连接，
+            //  此时就会创建一个连接，这个连接最终会补回连接池吗？
             } else {
                 closeChannel(ch);
                 acquireHealthyFromPoolOrNew(promise);
             }
+        // 如果获取的通道是不健康的，那么关闭通道；且重新递归调用acquireHealthyFromPoolOrNew方法来从连接池获取一个连接或新建一个连接，
+        // 总之方法执行到这里表明这个连接一定是从连接池拿出来的，此时这个拿出来的连接如果不可用，那么就新建一个连接
+        // TODO 【思考】假如从连接池拿出这个连接真的不可用，假如再调用acquireHealthyFromPoolOrNew去连接池拿连接时无可用连接，
+        //  此时就会创建一个连接，这个连接最终会补回连接池吗？
         } else {
             closeChannel(ch);
             acquireHealthyFromPoolOrNew(promise);
@@ -276,6 +301,8 @@ public class SimpleChannelPool implements ChannelPool {
 
     @Override
     public final Future<Void> release(Channel channel) {
+        // 这里如果连接池是FixedChannelPool的话，这里实质调用的是FixedChannelPool的release(final Channel channel, final Promise<Void> promise)方法，
+        // 因为FixedChannelPool重载了SimpleChannelPool的release(final Channel channel, final Promise<Void> promise)方法
         return release(channel, channel.eventLoop().<Void>newPromise());
     }
 

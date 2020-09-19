@@ -257,7 +257,8 @@ public class FixedChannelPool extends SimpleChannelPool {
     @Override
     public Future<Channel> acquire(final Promise<Channel> promise) {
         try {
-            // 如果当前线程是executor的线程，那么就直接调用acquire0方法获取连接
+            // 如果当前线程是executor的线程，那么就直接调用acquire0方法获取连接，
+            // 【注意】这里是异步去获取channel连接哈，如果调用future.get方法，只要连接没获取到，那么将一直阻塞，直到连接获取完成。
             if (executor.inEventLoop()) {
                 acquire0(promise);
             // 如果当前线程不是executor的线程，那么就新开一个线程调用acquire0方法获取连接
@@ -340,23 +341,35 @@ public class FixedChannelPool extends SimpleChannelPool {
     @Override
     public Future<Void> release(final Channel channel, final Promise<Void> promise) {
         ObjectUtil.checkNotNull(promise, "promise");
+        // 新建一个Promise
         final Promise<Void> p = executor.newPromise();
+        // 然后再调用父类SimpleChannelPool的release(final Channel channel, final Promise<Void> promise)方法，
+        // 【思考】这里为啥要这么绕呀？？？先是调用父类SimpleChannelPool的release(Channel channel)，然后在父类SimpleChannelPool的release方法
+        // 中再调用本方法，而明明父类就有这个release(final Channel channel, final Promise<Void> promise)方法，为何不直接调用呢？？？
+        //【答案】答案就是SimpleChannelPool只实现了连接池获取连接，释放连接和健康检查的相关基本方法，而连接释放回连接池后，我们是不是要唤醒
+        // pendingTaskQueue队列中的一个任务呢？是吧，因此下面就给Promise又添加了一个FutureListener监听器，这个监听器的作用就是当SimpleChannelPool的
+        // release方法把连接放回连接池后，此时回调该监听器的operationComplete方法来唤醒pendingTaskQueue里的一个任务，嘿嘿，是不是有点绕，哈哈
         super.release(channel, p.addListener(new FutureListener<Void>() {
 
             @Override
             public void operationComplete(Future<Void> future) throws Exception {
                 assert executor.inEventLoop();
-
+                // 以为连接池已经关闭，我们没得选择只能关闭channel，然后回调setFailure反弹广发
                 if (closed) {
                     // Since the pool is closed, we have no choice but to close the channel
                     channel.close();
                     promise.setFailure(new IllegalStateException("FixedChannelPool was closed"));
                     return;
                 }
-
+                // 如果释放连接回连接池成功
+                // TODO【思考】这个future是只哪个future呢？你能找到这个future是从哪里传进来的吗？
                 if (future.isSuccess()) {
+                    // 那么此时就要就获取的连接数量acquiredChannelCount减1且唤醒pendingTaskQueue队列的一个待获取连接的一个任务
+                    // 还记得之前分析acquire源码时当连接池无可用连接时，此时会将这个获取连接的一个线程封装成一个AcquireTask任务放进pendingTaskQueue队列吗？
                     decrementAndRunTaskQueue();
+                    // 回到setSuccess方法
                     promise.setSuccess(null);
+
                 } else {
                     Throwable cause = future.cause();
                     // Check if the exception was not because of we passed the Channel to the wrong pool.
