@@ -244,6 +244,7 @@ public class FixedChannelPool extends SimpleChannelPool {
                     throw new Error();
                 }
         }
+        // 这个executor是用来获取连接的，总是同一个executor异步去获取连接
         executor = bootstrap.config().group().next();
         this.maxConnections = maxConnections;
         this.maxPendingAcquires = maxPendingAcquires;
@@ -261,7 +262,7 @@ public class FixedChannelPool extends SimpleChannelPool {
             // 【注意】这里是异步去获取channel连接哈，如果调用future.get方法，只要连接没获取到，那么将一直阻塞，直到连接获取完成。
             if (executor.inEventLoop()) {
                 acquire0(promise);
-            // 如果当前线程不是executor的线程，那么就新开一个线程调用acquire0方法获取连接
+            // 如果当前线程不是executor的线程，那么就由executor这个线程调用acquire0方法获取连接,这里是异步获取连接哈
             } else {
                 executor.execute(new Runnable() {
                     @Override
@@ -413,11 +414,12 @@ public class FixedChannelPool extends SimpleChannelPool {
         // TODO 【思考】这里while (acquiredChannelCount.get() < maxConnections)判断的初衷感觉像是一定要从连接池获取一个连接，
         //      而不是新建一个连接，否则就不用这么判断了。那么问题来了：
         //      while (acquiredChannelCount.get() < maxConnections)没有线程安全问题么？？？如果不用锁的话可能会出现“一票多卖”问题
-        //      除非这里是单线程执行就没有线程安全问题或者acquiredChannelCount.get()是线程安全的？？？。
+        //      除非这里是单线程执行就没有线程安全问题。
         //      如果存在线程安全问题，当并发量大的话出现“一票多卖问题”，即最终还会导致连接池可用连接耗尽，其他没能拿到连接的线程还是会新建
         //      一些连接出来，这么做可是可以，但却又违反了“未超时任务的连接只能等待线程池的连接，超时任务再由定时任务额外新建连接”的初衷，
         //      因为执行到这里从pendingAcquireQueue队列取出的任务的一般都是未超时的。
-        //      【这个疑问求大牛回答，若直到答案，可以联系我，微信号：hardwork-persistence ，感激感谢！】
+        //      答案这里应该是单线程执行？待确认？调试的时候发现基本是同一个线程
+        //
         while (acquiredChannelCount.get() < maxConnections) {
             // 取出一个待获取连接的未超时的任务，因为如果是超时的获取连接任务的话，已经被定时任务移除掉了哈
             AcquireTask task = pendingAcquireQueue.poll();

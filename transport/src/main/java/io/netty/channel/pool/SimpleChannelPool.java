@@ -311,10 +311,14 @@ public class SimpleChannelPool implements ChannelPool {
         checkNotNull(channel, "channel");
         checkNotNull(promise, "promise");
         try {
+            // TODO 【思考】这里每次释放连接都是有多个NioEventLoop线程，而获取连接却用的是同一个NioEventLoop线程，为啥？？？
             EventLoop loop = channel.eventLoop();
+            // TODO 【思考】这里何时会被执行到？经过调试一般都是执行的是else分支
             if (loop.inEventLoop()) {
                 doReleaseChannel(channel, promise);
             } else {
+                // 此时将释放连接的操作封装成一个Runnable任务，然后将这个任务添加进SingleThreadEventExecutor的taskQueue中
+                // 反正最终是异步释放连接
                 loop.execute(new Runnable() {
                     @Override
                     public void run() {
