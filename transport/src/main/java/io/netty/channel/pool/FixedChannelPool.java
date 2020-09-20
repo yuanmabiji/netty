@@ -297,7 +297,7 @@ public class FixedChannelPool extends SimpleChannelPool {
             // TODO 用来当获取到连接回调其内部的operationComplete方法？
             AcquireListener l = new AcquireListener(promise);
             // 调用AcquireListener的acquired方法，在获取到连接前先给acquiredChannelCount加1，
-            // 大胆猜测，如果后续的获取连接若失败，肯定有acquiredChannelCount减1的代码
+            // TODO [思考]大胆猜测，如果后续的获取连接若失败，肯定有acquiredChannelCount减1的代码，但是在哪里呢
             l.acquired();
             // 给保证添加AcquireListener监听器
             p.addListener(l);
@@ -322,6 +322,8 @@ public class FixedChannelPool extends SimpleChannelPool {
                     if (timeoutTask != null) {
                         // 设置了获取连接超时处理策略的话，那么把timeoutTask扔到定时任务里去，一旦获取连接超时，那么就执行timeoutTask
                         // 若策略为NEW，那么就会新建连接然后返回；若策略为FAIL，那么直接抛异常
+                        // 这里调度超时任务后，然后再给task.timeoutFuture赋值，也是为了做标记的意思，因为后面一个线程释放连接后
+                        // 会继续“唤醒”pendingAcquireQueue的一个任务，那时候这个任务肯定是未超时的，所以需要取消这个定时任务
                         task.timeoutFuture = executor.schedule(timeoutTask, acquireTimeoutNanos, TimeUnit.NANOSECONDS);
                     }
                 // 执行到这里，说明前面入pendingAcquireQueue队列时队列已满，然后也直接抛异常
@@ -347,8 +349,8 @@ public class FixedChannelPool extends SimpleChannelPool {
         // 【思考】这里为啥要这么绕呀？？？先是调用父类SimpleChannelPool的release(Channel channel)，然后在父类SimpleChannelPool的release方法
         // 中再调用本方法，而明明父类就有这个release(final Channel channel, final Promise<Void> promise)方法，为何不直接调用呢？？？
         //【答案】答案就是SimpleChannelPool只实现了连接池获取连接，释放连接和健康检查的相关基本方法，而连接释放回连接池后，我们是不是要唤醒
-        // pendingTaskQueue队列中的一个任务呢？是吧，因此下面就给Promise又添加了一个FutureListener监听器，这个监听器的作用就是当SimpleChannelPool的
-        // release方法把连接放回连接池后，此时回调该监听器的operationComplete方法来唤醒pendingTaskQueue里的一个任务，嘿嘿，是不是有点绕，哈哈
+        // pendingAcquireQueue队列中的一个任务呢？是吧，因此下面就给Promise又添加了一个FutureListener监听器，这个监听器的作用就是当SimpleChannelPool的
+        // release方法把连接放回连接池后，此时回调该监听器的operationComplete方法来唤醒pendingAcquireQueue里的一个任务，嘿嘿，是不是有点绕，哈哈
         super.release(channel, p.addListener(new FutureListener<Void>() {
 
             @Override
@@ -361,21 +363,25 @@ public class FixedChannelPool extends SimpleChannelPool {
                     promise.setFailure(new IllegalStateException("FixedChannelPool was closed"));
                     return;
                 }
-                // 如果释放连接回连接池成功
-                // TODO【思考】这个future是只哪个future呢？你能找到这个future是从哪里传进来的吗？
+                // （1）如果释放连接回连接池成功
+                // TODO【思考】这个future是只哪个future呢？你能找到这个future是从哪里传进来的吗？嘿嘿嘿
                 if (future.isSuccess()) {
-                    // 那么此时就要就获取的连接数量acquiredChannelCount减1且唤醒pendingTaskQueue队列的一个待获取连接的一个任务
-                    // 还记得之前分析acquire源码时当连接池无可用连接时，此时会将这个获取连接的一个线程封装成一个AcquireTask任务放进pendingTaskQueue队列吗？
+                    // 那么此时就要就获取的连接数量acquiredChannelCount减1且“唤醒”pendingAcquireQueue队列的一个待获取连接的一个任务
+                    // 还记得之前分析acquire源码时当连接池无可用连接时，此时会将这个获取连接的一个线程封装成一个AcquireTask任务放进pendingAcquireQueue队列吗？
                     decrementAndRunTaskQueue();
                     // 回到setSuccess方法
                     promise.setSuccess(null);
-
+                // （2）如果连接没有成功释放回连接池，且没有还错池子的情况下发生了异常，那么这里同样需要获取的连接数量acquiredChannelCount减1
+                // 且“唤醒”pendingAcquireQueue队列的一个待获取连接的一个任务
+                // TODO 纳尼？？这里还可以多个池子？为啥没还错池子的情况发生了归还连接的时候发生异常就不用 decrementAndRunTaskQueue呢？二十直接调用setFailure方法，
+                //  这个setFailure方法又因此着什么逻辑呢？
                 } else {
                     Throwable cause = future.cause();
                     // Check if the exception was not because of we passed the Channel to the wrong pool.
                     if (!(cause instanceof IllegalArgumentException)) {
                         decrementAndRunTaskQueue();
                     }
+                    // 回调setFailure方法
                     promise.setFailure(future.cause());
                 }
             }
@@ -385,6 +391,7 @@ public class FixedChannelPool extends SimpleChannelPool {
 
     private void decrementAndRunTaskQueue() {
         // We should never have a negative value.
+        // 因为前面已经把连接归还回连接池了，自然这里会将已获取的连接数量减1
         int currentCount = acquiredChannelCount.decrementAndGet();
         assert currentCount >= 0;
 
@@ -392,25 +399,45 @@ public class FixedChannelPool extends SimpleChannelPool {
         // try to acquire again from the ChannelFutureListener and the pendingAcquireCount is >=
         // maxPendingAcquires we may be able to run some pending tasks first and so allow to add
         // more.
+        // 然后“唤醒”pendingAcquireQueue队列的一个待获取连接的一个任务去连接池拿连接或者新建一个连接出来
         runTaskQueue();
     }
 
     private void runTaskQueue() {
+        // c)这里非超时任务应该留给连接池的可用连接去处理哈，因为这里pendingAcquireQueue里的任务本来就是因为连接池资源耗尽的情况下，
+        //      其余获取连接的任务才入pendingAcquireQueue队列的，因此当一个线程用完从连接池获取的连接后，这个线程把连接归还给连接池后，
+        //      这个线程首先判断连接池还有无可用连接，若连接池还有可用连接，那么其有义务有“唤醒”pendingAcquireQueue队列中的一个未超时的任务，
+        //      这个任务被唤醒后，然后再去连接池获取连接即可
+
+        // 如果acquiredChannelCount小于连接池数量，说明连接池还有可用连接
+        // TODO 【思考】这里while (acquiredChannelCount.get() < maxConnections)判断的初衷感觉像是一定要从连接池获取一个连接，
+        //      而不是新建一个连接，否则就不用这么判断了。那么问题来了：
+        //      while (acquiredChannelCount.get() < maxConnections)没有线程安全问题么？？？如果不用锁的话可能会出现“一票多卖”问题
+        //      除非这里是单线程执行就没有线程安全问题或者acquiredChannelCount.get()是线程安全的？？？。
+        //      如果存在线程安全问题，当并发量大的话出现“一票多卖问题”，即最终还会导致连接池可用连接耗尽，其他没能拿到连接的线程还是会新建
+        //      一些连接出来，这么做可是可以，但却又违反了“未超时任务的连接只能等待线程池的连接，超时任务再由定时任务额外新建连接”的初衷，
+        //      因为执行到这里从pendingAcquireQueue队列取出的任务的一般都是未超时的。
+        //      【这个疑问求大牛回答，若直到答案，可以联系我，微信号：hardwork-persistence ，感激感谢！】
         while (acquiredChannelCount.get() < maxConnections) {
+            // 取出一个待获取连接的未超时的任务，因为如果是超时的获取连接任务的话，已经被定时任务移除掉了哈
             AcquireTask task = pendingAcquireQueue.poll();
+            // 若队列里没有待获取连接的任务，直接跳出即可
             if (task == null) {
                 break;
             }
-
+            // 如果当初有设置定时任务清理超时的带获取连接任务，那么此时timeoutFuture不为Null，因此需要取消这个定时任务的执行
             // Cancel the timeout if one was scheduled
             ScheduledFuture<?> timeoutFuture = task.timeoutFuture;
             if (timeoutFuture != null) {
                 timeoutFuture.cancel(false);
             }
-
+            // pendingAcquireCount减1
             --pendingAcquireCount;
+            // acquiredChannelCount加1
             task.acquired();
-
+            // 调用父类SimpleChannelPool的acquire方法：
+            // 1）连接池有可用连接，从连接池取出即可；
+            // 2）连接池没有可用连接，此时直接NEW一个连接出来
             super.acquire(task.promise);
         }
 
@@ -437,19 +464,41 @@ public class FixedChannelPool extends SimpleChannelPool {
         @Override
         public final void run() {
             assert executor.inEventLoop();
+            // 获取系统当前时间
             long nanoTime = System.nanoTime();
+            // 进入死循环
             for (;;) {
+                // 从pendingAcquireQueue队列中获取一个待获取连接的任务，【注意】这里是peek哈，相当于查询，而不会移除队列中的元素
+                // 【思考】天哪，这里是死循环+查询队列的操作，那当一个获取连接超时定时任务到来时，岂不会将pendingAcquireQueue队列中的
+                // 所有任务（包括未timeout的任务）都查出来？可以肯定的是这里确实是这样子，答案见后面代码注释分析
                 AcquireTask task = pendingAcquireQueue.peek();
                 // Compare nanoTime as descripted in the javadocs of System.nanoTime()
                 //
                 // See https://docs.oracle.com/javase/7/docs/api/java/lang/System.html#nanoTime()
-                // See https://github.com/netty/netty/issues/3705
+                // See https://github.com/netty/netty/issues/3705  这里估计出现过bug，后面修复了，嘿嘿。以后有空再去看看这个issue
+                // （1）如果从pendingAcquireQueue队列获取的任务为空，那么则说明没有待获取连接的任务了，此时直接break；
+                // (2) 如果从pendingAcquireQueue队列获取的任务不为空，此时肯定不能直接进行remove操作吧，想想，此时pendingAcquireQueue队列里
+                // 是不是有可能还有未超时的任务，
+                // 2.1）因此下面需要执行nanoTime - task.expireNanoTime是不是小于0，如果小于0直接break，等这个任务超时时再来执行这里的代码，
+                // 想想如果这里将非超时的任务也一起取出来去执行也不是不可以，想想这里不这样做的原因如下：
+                //      a)这里的职责是专门处理获取连接超时任务的，如果这里也执行非超时任务，那么造成功能混乱；
+                //      b)若本来超时任务就多，此时又加上处理非超时任务的话，那么系统压力会更大
+                //      c)这里非超时任务应该留给连接池的可用连接去处理哈，因为这里pendingAcquireQueue里的任务本来就是因为连接池资源耗尽的情况下，
+                //      其余获取连接的任务才入pendingAcquireQueue队列的，因此当一个线程用完从连接池获取的连接后，这个线程把连接归还给连接池后，
+                //      这个线程首先判断连接池还有无可用连接，若连接池还有可用连接，那么其有义务有“唤醒”pendingAcquireQueue队列中的一个未超时的任务，
+                //      这个任务被唤醒后，然后再去连接池获取连接即可
+                // 2.2）如果大于等于0，那么就根据是NEW还是FAIL策略来执行这个获取连接超时任务了
                 if (task == null || nanoTime - task.expireNanoTime < 0) {
                     break;
                 }
+                // 执行到这里，说明获取连接任务确实超时了，因此可以将这个任务直接从pendingAcquireQueue队列移除了哈
                 pendingAcquireQueue.remove();
-
+                // 自然，pendingAcquireCount也会减1
                 --pendingAcquireCount;
+                // 还记得FixedChannelPool的一个构造方法最终会根据AcquireTimeoutAction的NEW还是FAIL策略来新建一个TimeoutTask，
+                // 然后当获取连接时连接池又无可用连接情况下，此时除了获取连接任务会入pendingAcquireQueue队列外，另外TimeoutTask也会交给
+                // 一个定时任务调度线程线程去执行，还记得么？
+                // 那么代码执行到这里，说明已经在这个定时任务的调度方面里面了，此时再回调TimeoutTask的onTimeout方法哈
                 onTimeout(task);
             }
         }
