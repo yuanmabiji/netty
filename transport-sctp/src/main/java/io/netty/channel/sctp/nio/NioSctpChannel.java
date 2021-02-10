@@ -230,6 +230,7 @@ public class NioSctpChannel extends AbstractNioMessageChannel implements io.nett
         boolean success = false;
         try {
             boolean connected = javaChannel().connect(remoteAddress);
+            // 如果连接还没成功，说明连接还没完成，此时需要注册OP_CONNECT事件到selector，然后连接完成由selector.select到连接完毕事件，然后再做相关处理
             if (!connected) {
                 selectionKey().interestOps(SelectionKey.OP_CONNECT);
             }

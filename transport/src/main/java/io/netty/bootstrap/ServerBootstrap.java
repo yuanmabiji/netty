@@ -207,14 +207,16 @@ public class ServerBootstrap extends AbstractBootstrap<ServerBootstrap, ServerCh
         @Override
         @SuppressWarnings("unchecked")
         public void channelRead(ChannelHandlerContext ctx, Object msg) {
+            // 这里传进的msg必然是NioSocketChannel,封装着ServerSocket.accept()创建的SocketChannel,
             final Channel child = (Channel) msg;
-
+            // 将childHandler加进NioSocketChannel的pipeline中，这个childHandler就是我们平常用于服务端处理逻辑的
             child.pipeline().addLast(childHandler);
 
             setChannelOptions(child, childOptions, logger);
             setAttributes(child, childAttrs);
 
             try {
+                // childGroup是在启动的时候new出来的
                 childGroup.register(child).addListener(new ChannelFutureListener() {
                     @Override
                     public void operationComplete(ChannelFuture future) throws Exception {

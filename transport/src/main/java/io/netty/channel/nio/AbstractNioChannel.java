@@ -245,14 +245,19 @@ public abstract class AbstractNioChannel extends AbstractChannel {
                 }
 
                 boolean wasActive = isActive();
+                // 如果异步连接成功
                 if (doConnect(remoteAddress, localAddress)) {
+                    // 【重要】最终调用注册读事件，用于监听网络读操作位
                     fulfillConnectPromise(promise, wasActive);
+                // 异步连接还没完成
                 } else {
                     connectPromise = promise;
                     requestedRemoteAddress = remoteAddress;
 
                     // Schedule connect timeout.
                     int connectTimeoutMillis = config().getConnectTimeoutMillis();
+                    // 【Question1】如果超时时间到触发这个超时任务，说明连接已经超时？如果是这样的话，是不是slector监听到连接完成时，此时会取消这个超时任务？
+                    // 如果会取消超时任务，又是何时和在哪里被取消的呢？
                     if (connectTimeoutMillis > 0) {
                         connectTimeoutFuture = eventLoop().schedule(new Runnable() {
                             @Override
@@ -270,6 +275,8 @@ public abstract class AbstractNioChannel extends AbstractChannel {
                     promise.addListener(new ChannelFutureListener() {
                         @Override
                         public void operationComplete(ChannelFuture future) throws Exception {
+                            // TODO 如果连接完成时，连接又被取消，此时也将连接超时任务取消掉，且关闭连接
+                            // TODO operationComplete当且仅当连接完成才会被调用吗？当连接异常会调用吗？
                             if (future.isCancelled()) {
                                 if (connectTimeoutFuture != null) {
                                     connectTimeoutFuture.cancel(false);
@@ -302,6 +309,7 @@ public abstract class AbstractNioChannel extends AbstractChannel {
             // Regardless if the connection attempt was cancelled, channelActive() event should be triggered,
             // because what happened is what happened.
             if (!wasActive && active) {
+                // 【重要】最终调用注册读事件，用于监听网络读操作位
                 pipeline().fireChannelActive();
             }
 
@@ -331,7 +339,9 @@ public abstract class AbstractNioChannel extends AbstractChannel {
 
             try {
                 boolean wasActive = isActive();
+                // 这里调用jdk原生的finishConnect方法，并无其他netty的逻辑
                 doFinishConnect();
+                // TODO 这里一般连接成功才会执行这里的逻辑（包括回调监听器），假如是连接失败抛异常又是怎么处理的呢？
                 fulfillConnectPromise(connectPromise, wasActive);
             } catch (Throwable t) {
                 fulfillConnectPromise(connectPromise, annotateConnectException(t, requestedRemoteAddress));
@@ -339,6 +349,10 @@ public abstract class AbstractNioChannel extends AbstractChannel {
                 // Check for null as the connectTimeoutFuture is only created if a connectTimeoutMillis > 0 is used
                 // See https://github.com/netty/netty/issues/1770
                 if (connectTimeoutFuture != null) {
+                    // 【Answer1】如果连接成功后，如果有设置连接超时任务,执行到这里表示连接成功且完成，此时就需要把之前设置的超时任务给取消掉
+                    // 【Question2】会不会出现连接已经完成的同时即线程执行到这里，同时连接超时任务又被同时执行了？
+                    // 【Answer2】不会，因为一个channel的普通任务和定时任务等都由一个NIO线程来执行，因此不会有并发的问题
+                    // TODO 【Question3】 connectTimeoutFuture.cancel(false);的具体逻辑是怎样的？
                     connectTimeoutFuture.cancel(false);
                 }
                 connectPromise = null;
@@ -377,6 +391,10 @@ public abstract class AbstractNioChannel extends AbstractChannel {
         boolean selected = false;
         for (;;) {
             try {
+                //（1）如果是服务端：则将ServerSocketChannel注册到bossGroup中的一个selector上
+                //（2）如果是客户端，则将SocketChannel注册到workerGroup的一个selector上，然后workerGroup是随机选出来的一个
+                // 【注意】这里仅仅是把channel注册到selector上而已，并没注册感兴趣的事件，同时将netty封装的NioServerSocketChannel或ServerSokcetChannel
+                // 作为attachment附着在selectionKey上 TODO 【思考】这个attachment何时会被用到？
                 selectionKey = javaChannel().register(eventLoop().unwrappedSelector(), 0, this);
                 return;
             } catch (CancelledKeyException e) {
@@ -408,7 +426,7 @@ public abstract class AbstractNioChannel extends AbstractChannel {
         }
 
         readPending = true;
-
+        // 【重要】注册读事件
         final int interestOps = selectionKey.interestOps();
         if ((interestOps & readInterestOp) == 0) {
             selectionKey.interestOps(interestOps | readInterestOp);
