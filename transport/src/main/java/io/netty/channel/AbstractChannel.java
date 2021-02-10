@@ -810,6 +810,7 @@ public abstract class AbstractChannel extends DefaultAttributeMap implements Cha
                 @Override
                 public void run() {
                     try {
+                        // 【Answer5】如果连接超时的话（这里可能只是情况一），此时会将原来注册到selector上的channel给取消掉，即调用selcetionKey.cancel。
                         doDeregister();
                     } catch (Throwable t) {
                         logger.warn("Unexpected exception occurred while deregistering a channel.", t);

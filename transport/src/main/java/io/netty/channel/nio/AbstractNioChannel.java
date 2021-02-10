@@ -266,6 +266,7 @@ public abstract class AbstractNioChannel extends AbstractChannel {
                                 ConnectTimeoutException cause =
                                         new ConnectTimeoutException("connection timed out: " + remoteAddress);
                                 if (connectPromise != null && connectPromise.tryFailure(cause)) {
+                                    // 【Question5】如果连接超时的话，会将原来注册到selctor的channel给取消掉吗？
                                     close(voidPromise());
                                 }
                             }
@@ -340,8 +341,12 @@ public abstract class AbstractNioChannel extends AbstractChannel {
             try {
                 boolean wasActive = isActive();
                 // 这里调用jdk原生的finishConnect方法，并无其他netty的逻辑
+                // 【Answer4】jdk原生的finishConnect方法也有3种返回结果：
+                //                                                 1,连接成功，返回true；
+                //                                                 2,连接失败，返回false；
+                //                                                 3,抛出异常：由于链路被关闭，链路中断等异常，此时会进入catch代码块进行相关处理逻辑
                 doFinishConnect();
-                // TODO 这里一般连接成功才会执行这里的逻辑（包括回调监听器），假如是连接失败抛异常又是怎么处理的呢？
+                // 【Question4】这里一般连接成功才会执行这里的逻辑（包括回调监听器），假如是连接失败抛异常又是怎么处理的呢？
                 fulfillConnectPromise(connectPromise, wasActive);
             } catch (Throwable t) {
                 fulfillConnectPromise(connectPromise, annotateConnectException(t, requestedRemoteAddress));
