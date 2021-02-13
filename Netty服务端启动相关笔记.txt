@@ -1,0 +1,125 @@
+关于客户端：
+1，NioSocketChannel无参构造函数中创建java原生的SocketChannel。
+2，同样在NioSocketChannel构建的时候（即ServerSocketChannel.accept的时候新建该对象）传入READ感兴趣事件，设置非阻塞，保存java原生的SocketChannel。
+3，将第2步java原生的SocketChannel注册到Selector上是什么时候？
+   答：在netty的main reactor线程轮训客户端新连接时，此时触发pipeline.channelRead方法，最终调用到ServerBootStrapAcceptor的channelRead方法
+       来将SocketChannel注册到Sub Reactor线程的selector上，但此时注册的依然是不对任何事件感兴趣（0）
+4，什么时候注册READ事件？跟ServerSocketChannel注册ACCEPT事件共用代码，只不过此时ACCEPT事件时readInterestOp为16.
+   答：在AbstractChannel的register0方法中，判断isActive()方法为true（好像只要SercerSocket.accept后该channel就为true了），然后就调用pipeline.fireChannelActive();方法，最终调用了AbstractNioChannel的doBeginRead方法注册了READ事件。
+
+
+
+
+
+关于服务端：
+1，ServerBootstrapAcceptor是在ServerBootStrap类的init(Channel channel)里加进去的。
+2，ServerBootstrapAcceptor实现了ChannelHandlerAdapter类，覆写了channelRead方法；
+3，
+initAndRegister() {
+	Channel channel = this.channelFactory().newChannel();// 做了新建java原生的ServerSocketChannel，保存ACCEPT事件，设置channel为非阻塞。
+	this.init(channel);// 初始化了连接器ServerBootstrapAcceptor
+	ChannelFuture regFuture = this.group().register(channel);// 将java原生的serverSocketChannel注册到eventLoop的selector上，但此时无感兴趣事件（注册的0参数），同时返回的selectionKey保存到AbstractNioChannel的成员变量上，用于之后注册另外的感兴趣事件，另外，将NioServerSocketChannel也作为附件参数放到selectionKey上，以便以后用。
+}
+
+// 为啥注册ACCEPT事件是异步注册呢？ 因为Netty总是会起一个异步线程SingleThreadEventExeutor，让这个异步线程来在死循环做事情
+	// 总结：即用户线程bind本地端口后，最终触发pipeline.fireChannelActive()，只不过pipeline.fireChannelActive()这个方法执行步骤交给netty的loop线程执行而已。
+	         即最终在SingleThreadEventExecutor线程的runAllTasks中处理，最终调用到AbstractNioChannel.doBeginRead方法注册感兴趣事件。
+	// 触发是在AbstractChannel的bind(final SocketAddress localAddress, final ChannelPromise promise) 方法下触发：即把触发fireChannelActive方法封装为OneTimeTask，然后扔进MPSC队列，然后netty的异步线程再去这个队列取task，然后就有了fireChannelActive这个方法，最终调用了ACCEPT事件的注册
+	                                           if (!wasActive && AbstractChannel.this.isActive()) {
+							    this.invokeLater(new OneTimeTask() {
+								public void run() {
+								    AbstractChannel.this.pipeline.fireChannelActive();
+								}
+							    });
+							}
+	this.doBeginRead(); // 这个方法最终异步调用，经验证是在端口bind之后触发fireChannelActive方法，最终调用doBeginRead方法。这个方法最终做了注册ACCEPT事件。
+	
+	AbstractChannel.this.doBind(localAddress); // 在AbstractChannel的bind方法里触发绑定，此时channel是active的，但是channel.active在java底层是啥状态？
+	                                           // 即给ServerSocketChannelImpl的localAddress赋值后，即为isBound即isActive
+
+
+公共：
+1，AbstractNioChannel中保存引用了java原生的channel，selectionKey，然后selectionKey又attach了AbstractNioChannel，相互引用。
+2，EventExecutor数组在MultithreadEventExecutorGroup这个类上。
+
+
+疑问：
+1，selector在哪里保存？
+2，相互引用的对象能被jvm回收吗？
+3，ServerSocketChannel的bind和register方法（即serverSocketChannel注册ACCEPT事件在哪里注册？）是何时执行的？
+答：
+1）bind的逻辑由unsafe触发，最终在NioServerSocketChannel的doBind方法中绑定，但为啥好像是尾结点触发？
+2）由initAndRegister方法的this.channelFactory().newChannel();触发，ACCEPT事件是在NioServerSocketChannel的无参构造函数中传递一个16（即ACCEPT事件），最终在父类AbstractNioChannel中的readInterestOp成员变量中保存。
+3）
+4， AbstractNioChannel的构造函数只做了以下逻辑：
+protected AbstractNioChannel(Channel parent, SelectableChannel ch, int readInterestOp) {
+        super(parent);
+        this.ch = ch;
+        this.readInterestOp = readInterestOp;
+
+        try {
+            ch.configureBlocking(false);
+        } catch (IOException var7) {
+            try {
+                ch.close();
+            } catch (IOException var6) {
+                if (logger.isWarnEnabled()) {
+                    logger.warn("Failed to close a partially initialized socket.", var6);
+                }
+            }
+
+            throw new ChannelException("Failed to enter non-blocking mode.", var7);
+        }
+    }
+还有AbstractNioChannel的doRegister方法做了以下逻辑：
+this.selectionKey = this.javaChannel().register(this.eventLoop().selector, 0, this);
+这里只做了ServerSocketChannel注册到Selector上，但是没有注册ACCEPT事件。
+
+5， AbstractChannel.this表示集成该抽象类的当前运行子对象吗？
+答：是
+
+6，注册Selector时把NioServerSocketChannel或NioSocketChannel作为附件附加到selectionKey上，啥时拿出来用呢？干啥用呢？
+答：在NioEventLoop线程当select到一个IO或链接事件时， 在processSelectedKeys中会拿出来用，此时将NioServerSocketChannel或NioSocketChannel
+拿出来，目的是想拿到其成员变量unsafe对象比如NioMessageUnsafe对象，然后调用unsafe.read方法。
+
+7，netty的runAllTask是干啥的呢？
+
+8，ServerBootstrapAcceptor的channelRead方法在boss线程NioEventLoop的死循环里的processSelectedKeys里触发，
+此时如果当前线程不是worker线程NioEventLoop，此时就会将注册selector和注册READ事件封装为一个任务，扔进队列里去
+然后启动worker线程，这个worker线程在run过程中的runAllTask会从任务队列里取任务执行
+问题：1，如何判断boss线程不是worker线程？
+	答：在worker线程组创建的时候就已经在SingleThreadEventExecutor的thread成员变量保存了worker线程，然后可以通过比对当前线程跟worker线程是不是同一对象即可。
+      2，一个boss线程或worker线程各自有一个队列？
+	答：确实是
+
+      比对下博客园主从线程的切换逻辑。
+      1）博客园DEMO:注册SocketChannel和READ事件都是boss线程注册，只不过是boss线程注册后让正在阻塞的selector醒来以使生效而已。
+      2）Netty：    注册SocketChannel和READ事件都是worker线程注册，即boss线程会先启动worker线程，然后将相关注册逻辑封装为task然后扔进worker线程的队列，
+                    然后worker线程执行到runAllTask时取出该Task注册而已，然后该worker线程在下次select就有效了
+
+
+
+9，netty为什么要在IO线程中runAllTask()呢？这样不会影响性能么？比如写？为何runAllTask不独立出去呢？
+答：runAllTask执行的任务有：定时任务，netty自身的任务（比如注册selector或感兴趣事件，写数据？）还有一种是啥？
+    写数据也是在runAllTask中执行？若一个服务端对接很多客户端且写数据很多给客户端占用很多时间，不会影响IO事件么？
+    且写数据给客户端不及时，此时客户端不会超时么？如果不这么做的话，该怎样做？还有就是一般都是IO线程接收read事件，
+    然后触发业务线程处理业务逻辑，然后业务线程再拿到channel将数据写回客户端，难道业务线程写数据后，此时又由neety的
+    IO线程中的runAllTasks来处理？
+
+10，boss线程和worker线程分别是在哪里初始化的呢？
+答：new NioEventLoopGroup的时候初始化，因为NioEventLoopGroup的父类MultithreadEventExecutorGroup拥有EventExecutor数组，
+    然后将EventExecutor数组填充满NioEventLoop线程。
+
+11，selector是作为NioEventLoop的成员变量
+
+12，NioEventLoop作为worker线程时又是如何选择下一个线程的呢？
+答：MultithreadEventExecutorGroup拥有EventExecutor数组，即包括了多个NioEventLoop线程,而NioEventLoopGroup又继承了MultithreadEventExecutorGroup。
+    ServerBootStrapAccetpor中保存了一个EventLoopGroup类型的children成员变量，当有新连接入时，然后在NioServerSocketChannel中accept创建了
+    一个SocketChannel；然后触发Acceptor的channelRead方法，然后调用MultithreadEventLoopGroup的register方法，选择出一个worker线程NioEventLoop出来
+    然后将该NioEventLoop作为参数传递到AbstractChannel的register方法中，然后调用eventLoop.inEventLoop方法是否在当前NioEventLoop线程中，如果不在
+    则扔进队列，启动worker线程NioEventLoop即可。
+
+13，有空试同一个NioSocketChannel注册到多个不同的selector上会怎样？
+
+14，AbstractChannelHandlerContext中定义了一个EventExecutor类型的成员变量executor，其中在write数据的时候能拿出来执行即放入NioEventLoop线程
+    的队列里，然后由NioEventLoop的runAllTask执行。

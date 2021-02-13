@@ -39,6 +39,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * <a href="https://www.facebook.com/notes/facebook-engineering/scalable-memory-allocation-using-jemalloc/480222803919">
  * Scalable memory allocation using jemalloc</a>.
  */
+// PoolThreadCache是每个线程都会维护的一个对象
 final class PoolThreadCache {
 
     private static final InternalLogger logger = InternalLoggerFactory.getInstance(PoolThreadCache.class);
@@ -48,6 +49,8 @@ final class PoolThreadCache {
     final PoolArena<ByteBuffer> directArena;
 
     // Hold the caches for the different size classes, which are tiny, small and normal.
+    // 【Question7】为什么tinySubPageHeapCaches是一个数组呢？
+    // 【Answer7】比如tiny[32]数组，数组第一个位置不存放任何东西，第二个位置存放一个16位的queue,第三个位置存放32位的缓存queue
     private final MemoryRegionCache<byte[]>[] tinySubPageHeapCaches;
     private final MemoryRegionCache<byte[]>[] smallSubPageHeapCaches;
     private final MemoryRegionCache<ByteBuffer>[] tinySubPageDirectCaches;
@@ -75,7 +78,7 @@ final class PoolThreadCache {
         this.directArena = directArena;
         if (directArena != null) {
             tinySubPageDirectCaches = createSubPageCaches(
-                    tinyCacheSize, PoolArena.numTinySubpagePools, SizeClass.Tiny);
+                    tinyCacheSize, PoolArena.numTinySubpagePools/*32*/, SizeClass.Tiny);
             smallSubPageDirectCaches = createSubPageCaches(
                     smallCacheSize, directArena.numSmallSubpagePools, SizeClass.Small);
 
@@ -123,10 +126,13 @@ final class PoolThreadCache {
     private static <T> MemoryRegionCache<T>[] createSubPageCaches(
             int cacheSize, int numCaches, SizeClass sizeClass) {
         if (cacheSize > 0 && numCaches > 0) {
+            // 创建一个长度为32的MemoryRegionCache数组
             @SuppressWarnings("unchecked")
             MemoryRegionCache<T>[] cache = new MemoryRegionCache[numCaches];
             for (int i = 0; i < cache.length; i++) {
                 // TODO: maybe use cacheSize / cache.length
+                // 对每一个cache进行初始化，最终初始化了父类MemoryRegionCache
+                // TODO 【Question8】 不同规格的cache是如何分配或初始化的？
                 cache[i] = new SubPageMemoryRegionCache<T>(cacheSize, sizeClass);
             }
             return cache;
@@ -161,6 +167,9 @@ final class PoolThreadCache {
      * Try to allocate a tiny buffer out of the cache. Returns {@code true} if successful {@code false} otherwise
      */
     boolean allocateTiny(PoolArena<?> area, PooledByteBuf<?> buf, int reqCapacity, int normCapacity) {
+        // 【Answer9】 1,调用cacheForTiny方法找到对应size的MemoryRegionCache；
+        //            2，从queue中弹出一个entry给ByteBuf初始化
+        //            3，将弹出的entry扔到对象池进行复用
         return allocate(cacheForTiny(area, normCapacity), buf, reqCapacity);
     }
 
@@ -184,6 +193,7 @@ final class PoolThreadCache {
             // no cache found so just return false here
             return false;
         }
+
         boolean allocated = cache.allocate(buf, reqCapacity, this);
         if (++ allocations >= freeSweepAllocationThreshold) {
             allocations = 0;
@@ -301,7 +311,7 @@ final class PoolThreadCache {
         }
         cache.trim();
     }
-
+    // 1,调用cacheForTiny方法找到对应size的MemoryRegionCache；
     private MemoryRegionCache<?> cacheForTiny(PoolArena<?> area, int normCapacity) {
         int idx = PoolArena.tinyIdx(normCapacity);
         if (area.isDirect()) {
@@ -369,7 +379,9 @@ final class PoolThreadCache {
 
     private abstract static class MemoryRegionCache<T> {
         private final int size;
+        // queue用来存储每种大小的ByteBuf
         private final Queue<Entry<T>> queue;
+        // sizeClass有三种类型，分别为tiny,small和normal
         private final SizeClass sizeClass;
         private int allocations;
 
@@ -404,11 +416,13 @@ final class PoolThreadCache {
          * Allocate something out of the cache if possible and remove the entry from the cache.
          */
         public final boolean allocate(PooledByteBuf<T> buf, int reqCapacity, PoolThreadCache threadCache) {
+            // 2，从queue中弹出一个entry给ByteBuf初始化
             Entry<T> entry = queue.poll();
             if (entry == null) {
                 return false;
             }
             initBuf(entry.chunk, entry.nioBuffer, entry.handle, buf, reqCapacity, threadCache);
+            // 3，将弹出的entry扔到对象池进行复用
             entry.recycle();
 
             // allocations is not thread-safe which is fine as this is only called from the same thread all time.

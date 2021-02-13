@@ -37,7 +37,7 @@ abstract class PoolArena<T> implements PoolArenaMetric {
         Small,
         Normal
     }
-
+    // 512 >>> 4 = 32
     static final int numTinySubpagePools = 512 >>> 4;
 
     final PooledByteBufAllocator parent;
@@ -50,6 +50,7 @@ abstract class PoolArena<T> implements PoolArenaMetric {
     final int numSmallSubpagePools;
     final int directMemoryCacheAlignment;
     final int directMemoryCacheAlignmentMask;
+    // PoolSubpage也是双向链表
     private final PoolSubpage<T>[] tinySubpagePools;
     private final PoolSubpage<T>[] smallSubpagePools;
 
@@ -103,7 +104,14 @@ abstract class PoolArena<T> implements PoolArenaMetric {
         for (int i = 0; i < smallSubpagePools.length; i ++) {
             smallSubpagePools[i] = newSubpagePoolHead(pageSize);
         }
-
+        // TODO 【Question10】netty的内存分配是怎样的？
+        // 【Answer10】netty的内存分配流程：1，首先一个线程先从当前的PoolThreadCache里面拿到对应的PoolArena；
+        //                              2，然后再从PoolArena里面拿到一个PoolChunkList
+        //                              3，然后再从PoolChunkList里面找到一个Chunk进行内存分配
+        //                              4，在取出的这个chunk进行分配的时候再对要分配的内存大小进行判断，你要分配的内存大小是怎样的？
+        //                              5，如果要分配的内存是超过一个page，那么就会以page为单位进行内存分配；如果要分配的内存大小小于page，
+        //                                 那么就会找一个page，然后再将这个page分成多个subPage进行内存划分
+        // 构建双向链表
         q100 = new PoolChunkList<T>(this, null, 100, Integer.MAX_VALUE, chunkSize);
         q075 = new PoolChunkList<T>(this, q100, 75, 100, chunkSize);
         q050 = new PoolChunkList<T>(this, q075, 50, 100, chunkSize);
@@ -141,9 +149,11 @@ abstract class PoolArena<T> implements PoolArenaMetric {
     }
 
     abstract boolean isDirect();
-
+    // directArena或heapArena的内存分配流程
     PooledByteBuf<T> allocate(PoolThreadCache cache, int reqCapacity, int maxCapacity) {
+        // 从对象池里面拿到PooledByteBuf进行复用
         PooledByteBuf<T> buf = newByteBuf(maxCapacity);
+        // 从缓存上进行内存分配
         allocate(cache, buf, reqCapacity);
         return buf;
     }
@@ -171,7 +181,8 @@ abstract class PoolArena<T> implements PoolArenaMetric {
     static boolean isTiny(int normCapacity) {
         return (normCapacity & 0xFFFFFE00) == 0;
     }
-
+    // TODO 【Question9】netty的缓存命中流程是怎样的？
+    // 1，首先从缓存上进行内存分配；  2，其次再从内存堆里面进行内存分配。
     private void allocate(PoolThreadCache cache, PooledByteBuf<T> buf, final int reqCapacity) {
         final int normCapacity = normalizeCapacity(reqCapacity);
         if (isTinyOrSmall(normCapacity)) { // capacity < pageSize
@@ -179,6 +190,7 @@ abstract class PoolArena<T> implements PoolArenaMetric {
             PoolSubpage<T>[] table;
             boolean tiny = isTiny(normCapacity);
             if (tiny) { // < 512
+                // cache.allocateXXX方法蛮重要的
                 if (cache.allocateTiny(this, buf, reqCapacity, normCapacity)) {
                     // was able to allocate out of the cache so move on
                     return;

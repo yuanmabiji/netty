@@ -150,6 +150,7 @@ public abstract class AbstractNioByteChannel extends AbstractNioChannel {
                         // nothing was read. release the buffer.
                         byteBuf.release();
                         byteBuf = null;
+                        // 如果返回-1则说明发生了IO异常，需要关闭连接，释放资源
                         close = allocHandle.lastBytesRead() < 0;
                         if (close) {
                             // There is nothing left to read as we received an EOF.
@@ -160,8 +161,10 @@ public abstract class AbstractNioByteChannel extends AbstractNioChannel {
 
                     allocHandle.incMessagesRead(1);
                     readPending = false;
+                    // 读到消息后，fireChannelRead
                     pipeline.fireChannelRead(byteBuf);
                     byteBuf = null;
+                    // TODO 【Question6】这里读操作也有次数限制？若没有的话会影响NIO线程写操作或其他任务的执行。
                 } while (allocHandle.continueReading());
 
                 allocHandle.readComplete();
