@@ -33,3 +33,6 @@
    最后再把这个创建的UnpooledUnsafeDirectByteBuf封装为SimpleLeakAwareByteBuf对象 TODO 【Question11】 既然是UnPooled的直接内存，为何flush后还要释放呢？释放是指计数减1还是将内存归还内存池呢？
 28，调用ctx.writeAndFlush如果写的是HeapByteBuffer消息，此时会调用到AbstractNioChannel的filterOutboundMessage方法，最终调用到AbstractNioChannel.newDirectBuffer方法来新建一个直接内存，然后释放堆内存
 29,【Question12】 28步骤新建的直接内存又是在哪里释放的呢 【Answer12】是在ChannelOutboundBuffer的remove方法中释放和归还
+30, TODO 【Question13】AbstractNioByteChannel的内部类NioByteUnsafe的read方法中的byteBuf = allocHandle.allocate(allocator);默认分配的是
+    TODO              UnpooledUnsafeDirectByteBuf（为何这里不封装为SimpleLeakAwareByteBuf对象呢？？），最终好像也会在ByteToMessageDecoder的channelRead方法的finally块中调用cumulation.release();进行释放，
+    TODO              为何《netty进阶之路》的P43页说请求消息没有释放或者没被即使释放导致的堆外内存泄露？？？回公司确认下是不是MessageRecvHandler是不是也有ReferceCountUtil.release的逻辑？？
