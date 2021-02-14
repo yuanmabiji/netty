@@ -264,7 +264,9 @@ public abstract class ByteToMessageDecoder extends ChannelInboundHandlerAdapter 
      * events anymore.
      */
     protected void handlerRemoved0(ChannelHandlerContext ctx) throws Exception { }
-
+    // TODO 【Question21】 看到NettyRPC项目中的MessageDecoder类若字节码长度不够解码成一个业务pojo对象时，此时是直接return,而看到下面这个channelRead方法好像又有
+    // TODO 累积字节的相关逻辑，这有什么区别呢？？？
+    // TODO 【Question22】在业务的解码方法中若不够字节解码成一个业务pojo对象时，此时return，那下次又读到消息时，又是如何继续处理上一次ByteBuf遗留的字节消息的呢？？逻辑是怎样的？
     @Override
     public void channelRead(ChannelHandlerContext ctx, Object msg) throws Exception {
         if (msg instanceof ByteBuf) {
@@ -273,6 +275,7 @@ public abstract class ByteToMessageDecoder extends ChannelInboundHandlerAdapter 
                 first = cumulation == null;
                 cumulation = cumulator.cumulate(ctx.alloc(),
                         first ? Unpooled.EMPTY_BUFFER : cumulation, (ByteBuf) msg);
+                // 这里调用用户的解码器，将接收到的字节码解码成业务对象放入out集合中
                 callDecode(ctx, cumulation, out);
             } catch (DecoderException e) {
                 throw e;
@@ -293,6 +296,7 @@ public abstract class ByteToMessageDecoder extends ChannelInboundHandlerAdapter 
 
                     int size = out.size();
                     firedChannelRead |= out.insertSinceRecycled();
+                    // 这里最终调用用户的业务handler的channelRead方法，如果out有多个业务对象，则重复调用多次
                     fireChannelRead(ctx, out, size);
                 } finally {
                     out.recycle();

@@ -34,8 +34,10 @@
 28，调用ctx.writeAndFlush如果写的是HeapByteBuffer消息，此时会调用到AbstractNioChannel的filterOutboundMessage方法，最终调用到AbstractNioChannel.newDirectBuffer方法来新建一个直接内存，然后释放堆内存
 29,【Question12】 28步骤新建的直接内存又是在哪里释放的呢 【Answer12】是在ChannelOutboundBuffer的remove方法中释放和归还
 30, TODO 【Question13】AbstractNioByteChannel的内部类NioByteUnsafe的read方法中的byteBuf = allocHandle.allocate(allocator);默认分配的是
-    TODO              UnpooledUnsafeDirectByteBuf（为何这里不封装为SimpleLeakAwareByteBuf对象呢？？），最终好像也会在ByteToMessageDecoder的channelRead方法的finally块中调用cumulation.release();进行释放(只不过不是ReferenceCountUtil.release(msg);，两者等效吗？？？)，
-    TODO              为何《netty进阶之路》的P43页说请求消息没有释放或者没被即使释放导致的堆外内存泄露？？？回公司确认下是不是MessageRecvHandler是不是也有ReferceCountUtil.release的逻辑？？
+                      UnpooledUnsafeDirectByteBuf（为何这里不封装为SimpleLeakAwareByteBuf对象呢？？），最终好像也会在ByteToMessageDecoder的channelRead方法的finally块中调用cumulation.release();进行释放(只不过不是ReferenceCountUtil.release(msg);，两者等效吗？？？)，
+                      且《Netty实战》也提到：编码器和解码器的结构很简单，消息被编码后解码后会自动通过ReferenceCountUtil.release(message)释放，如果不想释放消息
+                      可以使用ReferenceCountUtil.retain(message)，这将会使引用数量增加而没有消息发布，大多数时候不需要这么做。
+                      为何《netty进阶之路》的P43页说请求消息没有释放或者没被即使释放导致的堆外内存泄露？？？回公司确认下是不是MessageRecvHandler是不是也有ReferceCountUtil.release的逻辑？？
 31，TODO 【Question14】为何非内存池的方式的内存也要按照内存池的方式进行释放内存呢？《Netty进阶之路》的P48页
 32，TODO 【Question15】为何NettyRPC项目中的netty框架无论是请求消息还是响应消息默认分配的ByteBuf都是非池化的直接内存呢？不是说默认是池化的内存么？
 33，TODO 【Question16】 ReferenceCountUtil.release(msg)和ByteBuf.release()有啥区别？
@@ -45,3 +47,4 @@
 36，若要深入学习netty的内存池机制，可以先深入学习下jemalloc的原理，再通过调试Netty的内存池源码来深入
 37，不管是哪种类型的ByteBuf释放内存时最终都会调用到AbstractReferenceCountedByteBuf.release0方法来进行内存释放?如果是池化内存，最终会调用到PooledByteBuf.deallocate方法
 38，Netty的Pool有用到内存池，ThreadLocal和对象池（缓存ByteBuf对象）等技术
+39，TODO 【Question20】在netty中如何动态增删handler？
