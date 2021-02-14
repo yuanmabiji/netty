@@ -88,6 +88,7 @@ public class LineBasedFrameDecoder extends ByteToMessageDecoder {
     }
 
     /**
+     * 每解码出一行会触发一次业务handler的channelRead方法
      * Create a frame out of the {@link ByteBuf} and return it.
      *
      * @param   ctx             the {@link ChannelHandlerContext} which this {@link ByteToMessageDecoder} belongs to
@@ -96,27 +97,36 @@ public class LineBasedFrameDecoder extends ByteToMessageDecoder {
      *                          be created.
      */
     protected Object decode(ChannelHandlerContext ctx, ByteBuf buffer) throws Exception {
+        // 找到换行符的位置
         final int eol = findEndOfLine(buffer);
         if (!discarding) {
             if (eol >= 0) {
                 final ByteBuf frame;
+                // 拿到需要换行的长度
                 final int length = eol - buffer.readerIndex();
+                // 如果是\r\n换行符的话，delimLength=2；
+                // 如果是\n换行符的话，delimLength=1；
                 final int delimLength = buffer.getByte(eol) == '\r'? 2 : 1;
-
+                // 如果需要换行的长度大于maxLength
                 if (length > maxLength) {
+                    // 将ByteBuf的读指针向右移动delimLength位
                     buffer.readerIndex(eol + delimLength);
+                    // 此时直接抛出异常，触发fireExceptionCaught，TODO 【Question31】此时触发的是触发业务handler的exceptionCaught方法？？?
                     fail(ctx, length);
                     return null;
                 }
-
+                // 默认为true表示解码的内容不包括换行符
                 if (stripDelimiter) {
+                    // 根据readerIndex到换行符之间的长度截取一个ByteBuf对象返回,注意此时buffer的readerIndex指针也会向右移动length个位置
                     frame = buffer.readRetainedSlice(length);
+                    // readerIndex指针向右移动length个位置后，此时要调用skipBytes方法再向右移动delimLength个位置跳过换行符
                     buffer.skipBytes(delimLength);
+                // 如果解码的内容也包括换行符的话
                 } else {
                     frame = buffer.readRetainedSlice(length + delimLength);
                 }
-
                 return frame;
+            // TODO 【Question32】若findEndOfLine方法返回-1则执行到这里，如果返回-1难道不是表示最后一行吗？最后一行默认有没有换行符呢？这里的逻辑不懂！
             } else {
                 final int length = buffer.readableBytes();
                 if (length > maxLength) {
@@ -166,12 +176,15 @@ public class LineBasedFrameDecoder extends ByteToMessageDecoder {
      */
     private int findEndOfLine(final ByteBuf buffer) {
         int totalLength = buffer.readableBytes();
+        // 从ByteBuf容器里找到第一个ByteProcessor.FIND_LF（\n）字符出现的位置，没有则返回-1
         int i = buffer.forEachByte(buffer.readerIndex() + offset, totalLength - offset, ByteProcessor.FIND_LF);
         if (i >= 0) {
             offset = 0;
+            // 如果\n字符前面是\r字符，此时i--退到\r字符位置
             if (i > 0 && buffer.getByte(i - 1) == '\r') {
                 i--;
             }
+        // 如果i==-1说明没有ByteBuf容器里没有\n字符，此时直接给offset赋值totalLength
         } else {
             offset = totalLength;
         }

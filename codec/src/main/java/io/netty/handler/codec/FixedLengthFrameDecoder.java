@@ -70,8 +70,10 @@ public class FixedLengthFrameDecoder extends ByteToMessageDecoder {
      */
     protected Object decode(
             @SuppressWarnings("UnusedParameters") ChannelHandlerContext ctx, ByteBuf in) throws Exception {
+        // 不够字节长度，直接返回null
         if (in.readableBytes() < frameLength) {
             return null;
+        // 足够长度的字节流，此时返回一个固定长度的ByteBuf对象（截取ByteBuf）
         } else {
             return in.readRetainedSlice(frameLength);
         }
