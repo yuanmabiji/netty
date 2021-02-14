@@ -289,11 +289,14 @@ public abstract class ByteToMessageDecoder extends ChannelInboundHandlerAdapter 
                 throw new DecoderException(e);
             } finally {
                 try {
+                    // 只要在callDecode方法解码出一个业务Pojo对象后，此时ByteBuf对象cumulation的字节流会被读走，此时cumulation就不可读即cumulation.isReadable()会返回false
+                    // 此时就需要释放cumulation对象了
                     if (cumulation != null && !cumulation.isReadable()) {
                         numReads = 0;
                         // TODO 【Question23】cumulation.release()和ReferenceCountUtil.release有啥区别？
                         cumulation.release();
                         cumulation = null;
+                    // TODO 【Question30】何时会处理这里的逻辑呢？
                     } else if (++numReads >= discardAfterReads) {
                         // We did enough reads already try to discard some bytes so we not risk to see a OOME.
                         // See https://github.com/netty/netty/issues/4275
@@ -304,8 +307,12 @@ public abstract class ByteToMessageDecoder extends ChannelInboundHandlerAdapter 
                     int size = out.size();
                     firedChannelRead |= out.insertSinceRecycled();
                     // 这里最终调用用户的业务handler的channelRead方法，如果out有多个业务对象，则重复调用多次
+                    // 【Question29】callDecode方法里面已经有fireChannelRead方法调用了，为啥这里finally块中还要有呢？
+                    // 【Answer29】 字节流被解码后，若ByteBuf容器的字节流被读取完（被解码后in.isReadable()返回false），
+                    // 会退出callDecode方法里的while (in.isReadable())循环，所以最终这里也要调用下fireChannelRead方法
                     fireChannelRead(ctx, out, size);
                 } finally {
+                    // 对象池回收
                     out.recycle();
                 }
             }
@@ -429,10 +436,13 @@ public abstract class ByteToMessageDecoder extends ChannelInboundHandlerAdapter 
      */
     protected void callDecode(ChannelHandlerContext ctx, ByteBuf in, List<Object> out) {
         try {
+            // 【重要】被解码后，in.isReadable()返回false或true
+            // 1，返回false,说明字节流被解码成了pojo对象，此时退出while循环，由上层方法的finally快触发channelRead方法
+            // 2，返回true,说明ByteBuf容器仍然还有字节流待读取，此时可能成功解码成了Pojo对象或也可能没有
             while (in.isReadable()) {
                 int outSize = out.size();
-                // TODO 【Question26】 这段逻辑什么时候会被调用到呢？
-                // 【Answer26】在调用decodeRemovalReentryProtection方法若成功解码出一个pojo对象后，此时outSize必定>0，此时就会触发这段逻辑
+                // 【Question26】 这段逻辑什么时候会被调用到呢？
+                // 【Answer26】在调用decodeRemovalReentryProtection方法若ByteBuf的字节流还未读取完时，若成功解码出一个pojo对象后，此时outSize必定>0，此时就会触发这段逻辑
                 if (outSize > 0) {
                     // 注意这里如果out集合有多个对象，会循环调用重载的fireChannelRead方法的
                     fireChannelRead(ctx, out, outSize);
