@@ -244,9 +244,10 @@ abstract class PoolArena<T> implements PoolArenaMetric {
             allocateHuge(buf, reqCapacity);
         }
     }
-
+    // page级别的内存分配
     // Method must be called inside synchronized(this) { ... } block
     private void allocateNormal(PooledByteBuf<T> buf, int reqCapacity, int normCapacity, PoolThreadCache threadCache) {
+        // 尝试在现有的chunk上分配
         if (q050.allocate(buf, reqCapacity, normCapacity, threadCache) ||
             q025.allocate(buf, reqCapacity, normCapacity, threadCache) ||
             q000.allocate(buf, reqCapacity, normCapacity, threadCache) ||
@@ -254,7 +255,7 @@ abstract class PoolArena<T> implements PoolArenaMetric {
             q075.allocate(buf, reqCapacity, normCapacity, threadCache)) {
             return;
         }
-
+        // 若现有的chunk分配失败，则创建一个chunk进行内存分配
         // Add a new chunk.
         PoolChunk<T> c = newChunk(pageSize, maxOrder, pageShifts, chunkSize);
         boolean success = c.allocate(buf, reqCapacity, normCapacity, threadCache);
@@ -285,6 +286,7 @@ abstract class PoolArena<T> implements PoolArenaMetric {
             deallocationsHuge.increment();
         } else {
             SizeClass sizeClass = sizeClass(normCapacity);
+            // 将连续的内存区段加入缓存
             if (cache != null && cache.add(this, chunk, nioBuffer, handle, normCapacity, sizeClass)) {
                 // cached so not free it.
                 return;

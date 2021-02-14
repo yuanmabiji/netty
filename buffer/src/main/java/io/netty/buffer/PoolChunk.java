@@ -233,6 +233,7 @@ final class PoolChunk<T> implements PoolChunkMetric {
         if (handle < 0) {
             return false;
         }
+        // 初始化PooledByteBuf
         ByteBuffer nioBuffer = cachedNioBuffers != null ? cachedNioBuffers.pollLast() : null;
         initBuf(buf, nioBuffer, handle, reqCapacity, threadCache);
         return true;
@@ -308,7 +309,11 @@ final class PoolChunk<T> implements PoolChunkMetric {
         byte value = value(id);
         assert value == d && (id & initial) == 1 << d : String.format("val = %d, id & initial = %d, d = %d",
                 value, id & initial, d);
+        // 标记该节点已经使用，不可以再进行内存分配
         setValue(id, unusable); // mark as unusable
+        // 这里只要某层的节点被标记为使用，此时就需要把这个节点的所有父节点都标记为使用，比如一个8k的节点被标记为使用，那么其父节点1M,2M,4M,8M都要
+        // 标记为被使用，目的是为了防止假如有一个8M的内存要分配，此时把这个已经分配的8k子节点内存的8M内存给分配出去
+        // TODO 【Question19】 这样岂不是很浪费内存？
         updateParentsAlloc(id);
         return id;
     }
@@ -320,7 +325,9 @@ final class PoolChunk<T> implements PoolChunkMetric {
      * @return index in memoryMap
      */
     private long allocateRun(int normCapacity) {
+        // d表示第几层
         int d = maxOrder - (log2(normCapacity) - pageShifts);
+        // 在第10层上寻找节点来分配节点
         int id = allocateNode(d);
         if (id < 0) {
             return id;
@@ -336,6 +343,7 @@ final class PoolChunk<T> implements PoolChunkMetric {
      * @param normCapacity normalized capacity
      * @return index in memoryMap
      */
+    // SubPage级别的内存分配
     private long allocateSubpage(int normCapacity) {
         // Obtain the head of the PoolSubPage pool that is owned by the PoolArena and synchronize on it.
         // This is need as we may add it back and so alter the linked-list structure.
@@ -372,6 +380,7 @@ final class PoolChunk<T> implements PoolChunkMetric {
      *
      * @param handle handle to free
      */
+    // 标记连续的内存区段为未使用
     void free(long handle, ByteBuffer nioBuffer) {
         int memoryMapIdx = memoryMapIdx(handle);
         int bitmapIdx = bitmapIdx(handle);

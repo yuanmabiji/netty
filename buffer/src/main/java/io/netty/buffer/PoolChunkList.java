@@ -102,7 +102,7 @@ final class PoolChunkList<T> implements PoolChunkListMetric {
             // be handled by the PoolChunks that are contained in this PoolChunkList.
             return false;
         }
-
+        // 从head节点上开始遍历
         for (PoolChunk<T> cur = head; cur != null; cur = cur.next) {
             if (cur.allocate(buf, reqCapacity, normCapacity, threadCache)) {
                 if (cur.freeBytes <= freeMinThreshold) {

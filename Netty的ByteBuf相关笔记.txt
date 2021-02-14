@@ -27,12 +27,21 @@
     直接进行内存拿到分配，不需要再去chunk里面找一段连续的内存。tiny和normal的逻辑也是类似的。
     问题：不同规格的cache是如何分配或初始化的？
 24，MemoryRegionCache是PoolThreadCache里面的一个抽象静态类
-25，每个线程里面会维护各自的PoolThreadCache，然后每个PoolThreadCache都会维护三种规格的Caches（直接或堆）；
+25，每个线程里面会维护各自的PoolThreadCache，然后每个poolthreadcache都会维护三种规格的caches（直接或堆）；
 26，命中缓存的分配流程是从PoolArena.allocate方法开始的
 27,调用ctx.writeAndFlush时，写自定义msg对象时，首先MessageToByteEncoder.write方法，然后再调用allocateBuffer方法来分配一个UnpooledUnsafeDirectByteBuf直接内存，
    最后再把这个创建的UnpooledUnsafeDirectByteBuf封装为SimpleLeakAwareByteBuf对象 TODO 【Question11】 既然是UnPooled的直接内存，为何flush后还要释放呢？释放是指计数减1还是将内存归还内存池呢？
 28，调用ctx.writeAndFlush如果写的是HeapByteBuffer消息，此时会调用到AbstractNioChannel的filterOutboundMessage方法，最终调用到AbstractNioChannel.newDirectBuffer方法来新建一个直接内存，然后释放堆内存
 29,【Question12】 28步骤新建的直接内存又是在哪里释放的呢 【Answer12】是在ChannelOutboundBuffer的remove方法中释放和归还
 30, TODO 【Question13】AbstractNioByteChannel的内部类NioByteUnsafe的read方法中的byteBuf = allocHandle.allocate(allocator);默认分配的是
-    TODO              UnpooledUnsafeDirectByteBuf（为何这里不封装为SimpleLeakAwareByteBuf对象呢？？），最终好像也会在ByteToMessageDecoder的channelRead方法的finally块中调用cumulation.release();进行释放，
+    TODO              UnpooledUnsafeDirectByteBuf（为何这里不封装为SimpleLeakAwareByteBuf对象呢？？），最终好像也会在ByteToMessageDecoder的channelRead方法的finally块中调用cumulation.release();进行释放(只不过不是ReferenceCountUtil.release(msg);，两者等效吗？？？)，
     TODO              为何《netty进阶之路》的P43页说请求消息没有释放或者没被即使释放导致的堆外内存泄露？？？回公司确认下是不是MessageRecvHandler是不是也有ReferceCountUtil.release的逻辑？？
+31，TODO 【Question14】为何非内存池的方式的内存也要按照内存池的方式进行释放内存呢？《Netty进阶之路》的P48页
+32，TODO 【Question15】为何NettyRPC项目中的netty框架无论是请求消息还是响应消息默认分配的ByteBuf都是非池化的直接内存呢？不是说默认是池化的内存么？
+33，TODO 【Question16】 ReferenceCountUtil.release(msg)和ByteBuf.release()有啥区别？
+34，TODO 【Question17】 Dubbo或NettyRPC是如何共用一个channel的?
+35，TODO 【Question18】 动手实践：如何模拟内存泄露导致OOM？《Netty进阶之路》说到请求消息需要人工手动释放？如果不人工释放，则需要继承SimpleInboundHandler或调用ctx.channelRead方法将
+                       消息转发给TailContext来释放？
+36，若要深入学习netty的内存池机制，可以先深入学习下jemalloc的原理，再通过调试Netty的内存池源码来深入
+37，不管是哪种类型的ByteBuf释放内存时最终都会调用到AbstractReferenceCountedByteBuf.release0方法来进行内存释放?如果是池化内存，最终会调用到PooledByteBuf.deallocate方法
+38，Netty的Pool有用到内存池，ThreadLocal和对象池（缓存ByteBuf对象）等技术

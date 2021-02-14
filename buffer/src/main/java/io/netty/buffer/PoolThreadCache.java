@@ -403,6 +403,7 @@ final class PoolThreadCache {
         @SuppressWarnings("unchecked")
         public final boolean add(PoolChunk<T> chunk, ByteBuffer nioBuffer, long handle) {
             Entry<T> entry = newEntry(chunk, nioBuffer, handle);
+            // 将entry放入缓存queue里面
             boolean queued = queue.offer(entry);
             if (!queued) {
                 // If it was not possible to cache the chunk, immediately recycle the entry
@@ -499,6 +500,7 @@ final class PoolThreadCache {
 
         @SuppressWarnings("rawtypes")
         private static Entry newEntry(PoolChunk<?> chunk, ByteBuffer nioBuffer, long handle) {
+            // 从对象池中取出来
             Entry entry = RECYCLER.get();
             entry.chunk = chunk;
             entry.nioBuffer = nioBuffer;
