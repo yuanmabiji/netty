@@ -87,6 +87,7 @@ public abstract class ByteToMessageDecoder extends ChannelInboundHandlerAdapter 
             }
             try {
                 final int required = in.readableBytes();
+                // 如果ByteBuf容器cumulation的可写字节容量小于需要累积的容量n.readableBytes()，此时需要扩容
                 if (required > cumulation.maxWritableBytes() ||
                         (required > cumulation.maxFastWritableBytes() && cumulation.refCnt() > 1) ||
                         cumulation.isReadOnly()) {
@@ -94,8 +95,10 @@ public abstract class ByteToMessageDecoder extends ChannelInboundHandlerAdapter 
                     // - cumulation cannot be resized to accommodate the additional data
                     // - cumulation can be expanded with a reallocation operation to accommodate but the buffer is
                     //   assumed to be shared (e.g. refCnt() > 1) and the reallocation may not be safe.
+                    // 扩容并累加字节流
                     return expandCumulation(alloc, cumulation, in);
                 }
+                // 累加字节流
                 cumulation.writeBytes(in, in.readerIndex(), required);
                 in.readerIndex(in.writerIndex());
                 return cumulation;
@@ -272,7 +275,10 @@ public abstract class ByteToMessageDecoder extends ChannelInboundHandlerAdapter 
         if (msg instanceof ByteBuf) {
             CodecOutputList out = CodecOutputList.newInstance();
             try {
+                // 若cumulation == null即第一次从IO流中读取数据
                 first = cumulation == null;
+                // 累加字节，即将新读进来的msg(ByteBuf对象)的字节流累加到cumulation中，注意msg会在cumulate方法中release
+                // // TODO 【Question24】因为msg会在cumulate方法中release，cumulation会在这个方法的finally块中release，为何《Netty进阶之路》说道请求ByteBuf需要手工释放呢？
                 cumulation = cumulator.cumulate(ctx.alloc(),
                         first ? Unpooled.EMPTY_BUFFER : cumulation, (ByteBuf) msg);
                 // 这里调用用户的解码器，将接收到的字节码解码成业务对象放入out集合中
@@ -285,6 +291,7 @@ public abstract class ByteToMessageDecoder extends ChannelInboundHandlerAdapter 
                 try {
                     if (cumulation != null && !cumulation.isReadable()) {
                         numReads = 0;
+                        // TODO 【Question23】cumulation.release()和ReferenceCountUtil.release有啥区别？
                         cumulation.release();
                         cumulation = null;
                     } else if (++numReads >= discardAfterReads) {
@@ -424,8 +431,10 @@ public abstract class ByteToMessageDecoder extends ChannelInboundHandlerAdapter 
         try {
             while (in.isReadable()) {
                 int outSize = out.size();
-
+                // TODO 【Question26】 这段逻辑什么时候会被调用到呢？
+                // 【Answer26】在调用decodeRemovalReentryProtection方法若成功解码出一个pojo对象后，此时outSize必定>0，此时就会触发这段逻辑
                 if (outSize > 0) {
+                    // 注意这里如果out集合有多个对象，会循环调用重载的fireChannelRead方法的
                     fireChannelRead(ctx, out, outSize);
                     out.clear();
 
@@ -441,6 +450,7 @@ public abstract class ByteToMessageDecoder extends ChannelInboundHandlerAdapter 
                 }
 
                 int oldInputLength = in.readableBytes();
+                // TODO 【待验证】调用真正的子类解码逻辑
                 decodeRemovalReentryProtection(ctx, in, out);
 
                 // Check if this handler was removed before continuing the loop.
@@ -450,21 +460,25 @@ public abstract class ByteToMessageDecoder extends ChannelInboundHandlerAdapter 
                 if (ctx.isRemoved()) {
                     break;
                 }
-
+                // 调用子类解码逻辑后，如果outSize 仍然等于 out.size()，说明解码成一个Pojo对象的累积的字节流还不够，子类没能解码直接return回来了
                 if (outSize == out.size()) {
+                    // 如果oldInputLength == in.readableBytes()，说明子类没有读取ByteBuf的数据流，此时累积的数据流不够，直接break跳出循环，等待下一次累积数据流的到来触发
                     if (oldInputLength == in.readableBytes()) {
                         break;
+                    // 执行到这里说明子类解码器已经读取了ByteBuf的一部分数据流，只不过还不足以解码成一个pojo对象，此时继续循环等下一次说不定就能解码成功
+                    // TODO 【Question27】说明时候会出现这种情况呢？
                     } else {
                         continue;
                     }
                 }
-
+                // 执行到这里必定是outSize不等于out.size()，说明什么？说明已经解码出了一个对象
+                // 如果解码出了一个对象但子类解码器却没有读取任何ByteBuf的字节流，说明有异常，因此抛出异常
                 if (oldInputLength == in.readableBytes()) {
                     throw new DecoderException(
                             StringUtil.simpleClassName(getClass()) +
                                     ".decode() did not read anything but decoded a message.");
                 }
-
+                // 是否每次有IO流到来时都只解码一次，基于性能考虑默认为false
                 if (isSingleDecode()) {
                     break;
                 }
@@ -506,6 +520,7 @@ public abstract class ByteToMessageDecoder extends ChannelInboundHandlerAdapter 
         } finally {
             boolean removePending = decodeState == STATE_HANDLER_REMOVED_PENDING;
             decodeState = STATE_INIT;
+            // TODO 【Question28】 这段逻辑什么时候会被调用到呢？
             if (removePending) {
                 fireChannelRead(ctx, out, out.size());
                 out.clear();
@@ -533,13 +548,19 @@ public abstract class ByteToMessageDecoder extends ChannelInboundHandlerAdapter 
         int oldBytes = oldCumulation.readableBytes();
         int newBytes = in.readableBytes();
         int totalBytes = oldBytes + newBytes;
+        // new 一个扩容后的ByteBuf对象newCumulation，容量为oldBytes + newBytes
         ByteBuf newCumulation = alloc.buffer(alloc.calculateNewCapacity(totalBytes, MAX_VALUE));
+        // 这里为啥要赋值一次呢？
         ByteBuf toRelease = newCumulation;
         try {
             // This avoids redundant checks and stack depth compared to calling writeBytes(...)
+            // 将原来累加的字节流写到newCumulation
             newCumulation.setBytes(0, oldCumulation, oldCumulation.readerIndex(), oldBytes)
+                // 将新的字节流写到newCumulation
                 .setBytes(oldBytes, in, in.readerIndex(), newBytes)
+                // 调整newCumulation的写指针
                 .writerIndex(totalBytes);
+            // TODO 【Question25】这里为啥要调整in的读指针呢？
             in.readerIndex(in.writerIndex());
             toRelease = oldCumulation;
             return newCumulation;

@@ -1,0 +1,4 @@
+1，所有的Netty解码器都是基于ByteToMessageDecoder基类来实现的，即ByteToMessageDecoder定义了解码的骨架，具体的解码逻辑decode方法由子类实现；
+2，ByteToMessageDecoder解码步骤：1，累加字节流，即Netty通过ByteBuf来累加多次读取的字节流，因为有时候解码ByteBuf的字节流不足于
+   解码成一个业务pojo对象，所以需要累加； 2，调用子类的decoder方法进行真正的解码（注意，不会累加够字节流再调用子类decode解码方法，
+   如果子类解码时不足于解码成一个pojo业务对象直接return即可，此时ByteToMessageDecoder会累加字节流）； 3，将解析到的ByteBuf向下传播
