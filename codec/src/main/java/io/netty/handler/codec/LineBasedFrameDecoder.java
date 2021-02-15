@@ -194,6 +194,7 @@ public class LineBasedFrameDecoder extends ByteToMessageDecoder {
     private int findEndOfLine(final ByteBuf buffer) {
         int totalLength = buffer.readableBytes();
         // 从ByteBuf容器里找到第一个ByteProcessor.FIND_LF（\n）字符出现的位置，没有则返回-1
+        // LineBasedFrameDecoder解码器需要将\n转换成字节后再去ByteBuf容器里面分割
         int i = buffer.forEachByte(buffer.readerIndex() + offset, totalLength - offset, ByteProcessor.FIND_LF);
         if (i >= 0) {
             offset = 0;

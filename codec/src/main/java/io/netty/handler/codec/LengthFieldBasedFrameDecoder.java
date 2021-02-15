@@ -26,6 +26,8 @@ import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelHandlerContext;
 
 /**
+ * 【结论】最终解码截取多少个字节长度取决于lengthFieldOffset，lengthFieldLength，lengthAdjustment
+ * 和initialBytesToStrip这四个参数综合作用
  * A decoder that splits the received {@link ByteBuf}s dynamically by the
  * value of the length field in the message.  It is particularly useful when you
  * decode a binary message which has an integer header field that represents the
@@ -44,6 +46,9 @@ import io.netty.channel.ChannelHandlerContext;
  * length field.  Therefore, it can be decoded with the simplistic parameter
  * combination.
  * <pre>
+ * 1）因为Length所在位置向右偏移了0个字节，故lengthFieldOffset=0
+ * 2）因为长度域内容只表示消息体的长度，长度域Length与消息体之间没有任何消息头，故lengthAdjustment=0
+ * 3）从第0个字节开始截取故initialBytesToStrip = 0
  * <b>lengthFieldOffset</b>   = <b>0</b>
  * <b>lengthFieldLength</b>   = <b>2</b>
  * lengthAdjustment    = 0
@@ -64,6 +69,9 @@ import io.netty.channel.ChannelHandlerContext;
  * specified <tt>2</tt>, that is same with the length of the length field, to
  * strip the first two bytes.
  * <pre>
+ * 1）因为Length所在位置向右偏移了0个字节，故lengthFieldOffset=0
+ * 2）因为长度域内容只表示消息体的长度，长度域Length与消息体之间没有任何消息头，故lengthAdjustment=0
+ * 3）从第3个字节开始截取故initialBytesToStrip = 2去掉消息长度
  * lengthFieldOffset   = 0
  * lengthFieldLength   = 2
  * lengthAdjustment    = 0
@@ -87,8 +95,12 @@ import io.netty.channel.ChannelHandlerContext;
  * is always greater than the body length by <tt>2</tt>, we specify <tt>-2</tt>
  * as <tt>lengthAdjustment</tt> for compensation.
  * <pre>
+ * 1）因为Length所在位置向右偏移了0个字节，故lengthFieldOffset=0
+ * 2）因为长度域内容只表示整个消息的长度，长度域Length与消息体之间没有任何消息头，而消息体内容字节长度只有12，故lengthAdjustment=-2
+ * 3）从第0个字节开始截取故initialBytesToStrip = 0
  * lengthFieldOffset   =  0
  * lengthFieldLength   =  2
+ * 因为长度域占2个字节，而长度域内容又是默认表示的真正内容的长度，而此时长度域内容又包括了长度域的长度，所以要减去长度域的长度，所以lengthAdjustment=-2
  * <b>lengthAdjustment</b>    = <b>-2</b> (= the length of the Length field)
  * initialBytesToStrip =  0
  *
@@ -106,6 +118,9 @@ import io.netty.channel.ChannelHandlerContext;
  * again because the decoder always takes the length of the prepended data into
  * account during frame length calculation.
  * <pre>
+ * 1）因为Length所在位置向右偏移了2个字节，故lengthFieldOffset=2
+ * 2）因为长度域内容只表示消息体的长度，长度域Length与消息体之间没有任何消息头，故lengthAdjustment=0
+ * 3）从第0个字节开始截取故initialBytesToStrip = 0
  * <b>lengthFieldOffset</b>   = <b>2</b> (= the length of Header 1)
  * <b>lengthFieldLength</b>   = <b>3</b>
  * lengthAdjustment    = 0
@@ -125,6 +140,9 @@ import io.netty.channel.ChannelHandlerContext;
  * positive <tt>lengthAdjustment</tt> so that the decoder counts the extra
  * header into the frame length calculation.
  * <pre>
+ * 1）因为Length所在位置向右偏移了0个字节，故lengthFieldOffset=0
+ * 2）因为长度域内容只表示消息体的长度，而右边多了个HDR2站2个字节，故lengthAdjustment=2
+ * 3）从第0个字节开始截取故initialBytesToStrip = 0
  * lengthFieldOffset   = 0
  * lengthFieldLength   = 3
  * <b>lengthAdjustment</b>    = <b>2</b> (= the length of Header 1)
@@ -148,6 +166,9 @@ import io.netty.channel.ChannelHandlerContext;
  * header from the frame.  If you don't want to strip the prepended header, you
  * could specify <tt>0</tt> for <tt>initialBytesToSkip</tt>.
  * <pre>
+ * 1）因为Length所在位置向右偏移了一个字节，故lengthFieldOffset=1
+ * 2）因为长度域内容只表示消息体的长度，而右边多了个HDR2站1个字节，故lengthAdjustment=1
+ * 3）但要从HDR2开始截取，故initialBytesToStrip=3，
  * lengthFieldOffset   = 1 (= the length of HDR1)
  * lengthFieldLength   = 2
  * <b>lengthAdjustment</b>    = <b>1</b> (= the length of HDR2)
@@ -171,8 +192,13 @@ import io.netty.channel.ChannelHandlerContext;
  * Please note that we don't need to take the length of HDR2 into account
  * because the length field already includes the whole header length.
  * <pre>
+ * 1）Length向右偏移了一个字节，故lengthFieldOffset   =  1
+ * 2）从HDR2开始截取，故initialBytesToStrip=3
+ * 3）因为从HDR2开始截取16个字节，但因为长度域代表了整个消息的长度，故要减去3即lengthAdjustment=-3
  * lengthFieldOffset   =  1
  * lengthFieldLength   =  2
+ * TODO 【Question35】 lengthAdjustment这个参数如何理解？
+ *      【Answer35】 lengthAdjustment用来当调整要截取的字符串长度，即从Length域结尾开始截取多少个字节
  * <b>lengthAdjustment</b>    = <b>-3</b> (= the length of HDR1 + LEN, negative)
  * <b>initialBytesToStrip</b> = <b> 3</b>
  *
