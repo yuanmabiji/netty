@@ -26,7 +26,9 @@ import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelHandlerContext;
 
 /**
- * 【结论】最终解码截取多少个字节长度取决于lengthFieldOffset，lengthFieldLength，lengthAdjustment
+ * 【结论】最终解码截取多少个字节长度取决于lengthFieldOffset，lengthFieldLength，lengthAdjustment，
+ *        即每次要从ByteBuf累积的字节流中截取的实际字节流长度满足以下公式：
+ *        actualFrameLength = frameLength + lengthAdjustment + lengthFieldOffset + lengthFieldLength - initialBytesToStrip
  * 和initialBytesToStrip这四个参数综合作用
  * A decoder that splits the received {@link ByteBuf}s dynamically by the
  * value of the length field in the message.  It is particularly useful when you
@@ -441,7 +443,7 @@ public class LengthFieldBasedFrameDecoder extends ByteToMessageDecoder {
         if (frameLength < 0) {
             failOnNegativeLengthField(in, frameLength, lengthFieldEndOffset);
         }
-        // TODO
+        // TODO 【Question37】 为何要加上lendthFieldEndOffset呢？如何理解？
         frameLength += lengthAdjustment + lengthFieldEndOffset;
         // 若待解码内容长度小于lengthFieldEndOffset，同样需要抛出异常，同时需要将读指针readerIndex向右移动到lengthFieldEndOffset处，以免下次IO流的解码受影响
         if (frameLength < lengthFieldEndOffset) {
