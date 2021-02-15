@@ -365,7 +365,10 @@ public class LengthFieldBasedFrameDecoder extends ByteToMessageDecoder {
     }
 
     private void discardingTooLongFrame(ByteBuf in) {
+        // this.bytesToDiscard是上一次IO事件中ByteBuf累积的字节流不够用来丢弃剩下的待丢弃的长度
         long bytesToDiscard = this.bytesToDiscard;
+        // 此时计算此次ByteBuf累积的字节流和待丢弃的字节流哪个更小，如果ByteBuf累积的字节流比待丢弃的字节流长度还小，此时直接将ByteBuf的读指针移动到末尾，此时重新计算待丢弃的字节长度
+        // 若ByteBuf累积的字节流大于等于待丢弃的字节流长度，此时将ByteBuf的读指针向右移动待丢弃的字节长度即可，此时待丢弃的字节已经被丢弃完，此时this.bytesToDiscard为0
         int localBytesToDiscard = (int) Math.min(bytesToDiscard, in.readableBytes());
         in.skipBytes(localBytesToDiscard);
         bytesToDiscard -= localBytesToDiscard;
@@ -427,7 +430,8 @@ public class LengthFieldBasedFrameDecoder extends ByteToMessageDecoder {
      *                          be created.
      */
     protected Object decode(ChannelHandlerContext ctx, ByteBuf in) throws Exception {
-        // 默认为false，当frameLength大于maxFrameLength时，将会开启丢弃模式即discardingTooLongFrame=true
+        // 默认为false，当frameLength大于maxFrameLength时，将会开启丢弃模式即discardingTooLongFrame=true，
+        // 即当IO流到来时首先丢弃上次未丢弃完的字节（长度为this.bytesToDiscard）,等丢弃完后再继续进行下一轮（Frame）的解码
         if (discardingTooLongFrame) {
             discardingTooLongFrame(in);
         }
