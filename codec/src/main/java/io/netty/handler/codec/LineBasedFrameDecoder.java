@@ -99,6 +99,7 @@ public class LineBasedFrameDecoder extends ByteToMessageDecoder {
     protected Object decode(ChannelHandlerContext ctx, ByteBuf buffer) throws Exception {
         // 找到换行符的位置
         final int eol = findEndOfLine(buffer);
+        // 默认为false
         if (!discarding) {
             if (eol >= 0) {
                 final ByteBuf frame;
@@ -109,10 +110,11 @@ public class LineBasedFrameDecoder extends ByteToMessageDecoder {
                 final int delimLength = buffer.getByte(eol) == '\r'? 2 : 1;
                 // 如果需要换行的长度大于maxLength
                 if (length > maxLength) {
-                    // 将ByteBuf的读指针向右移动delimLength位
+                    // 将ByteBuf的读指针向右移动delimLength + delimLength位
                     buffer.readerIndex(eol + delimLength);
-                    // 此时直接抛出异常，触发fireExceptionCaught，TODO 【Question31】此时触发的是触发业务handler的exceptionCaught方法？？?
+                    // 此时直接触发fireExceptionCaught，TODO 【Question31】此时触发的是触发业务handler的exceptionCaught方法？？?
                     fail(ctx, length);
+                    // 触发业务handler的exceptionCaught方法后，返回null，此时不会再触发业务handler的channelRead方法
                     return null;
                 }
                 // 默认为true表示解码的内容不包括换行符
@@ -126,8 +128,11 @@ public class LineBasedFrameDecoder extends ByteToMessageDecoder {
                     frame = buffer.readRetainedSlice(length + delimLength);
                 }
                 return frame;
-            // TODO 【Question32】若findEndOfLine方法返回-1则执行到这里，如果返回-1难道不是表示最后一行吗？最后一行默认有没有换行符呢？这里的逻辑不懂！
+            // 若findEndOfLine方法返回-1即没有找到换行符则执行到这里，说明可能累积的字节流还不够。然后判断下ByteBuf容量有没超，
+            // 若有超过maxLength，则开启丢弃模式，最后返回null；若没有超过maxLength，则直接返回null。返回null后等下次IO流到来时继续解码
+            // TODO 【Question32】最后一行默认有没有换行符呢？按照这里的逻辑最后一行也需要换行符
             } else {
+                // 若ByteBuf的字节长度大于maxLength，则丢弃相应字节，置discarding = true，且触发exceptionCaught方法
                 final int length = buffer.readableBytes();
                 if (length > maxLength) {
                     discardedBytes = length;
@@ -138,9 +143,12 @@ public class LineBasedFrameDecoder extends ByteToMessageDecoder {
                         fail(ctx, "over " + discardedBytes);
                     }
                 }
+                // 最后返回null，待下次IO流到来时再继续解码
                 return null;
             }
+        // 执行到这里，说明前面没有换行符的情况下ByteBuf的长度已经超过maxLength并且已经被丢弃了
         } else {
+            // 当有一次IO流到来时，若此时继续读到换行符，那么则继续丢弃原来的那一行
             if (eol >= 0) {
                 final int length = discardedBytes + eol - buffer.readerIndex();
                 final int delimLength = buffer.getByte(eol) == '\r'? 2 : 1;
@@ -150,12 +158,14 @@ public class LineBasedFrameDecoder extends ByteToMessageDecoder {
                 if (!failFast) {
                     fail(ctx, length);
                 }
+            // 若读到的IO流中仍然没有换行符，则继续丢弃
             } else {
                 discardedBytes += buffer.readableBytes();
                 buffer.readerIndex(buffer.writerIndex());
                 // We skip everything in the buffer, we need to set the offset to 0 again.
                 offset = 0;
             }
+            // 返回null
             return null;
         }
     }
@@ -165,6 +175,7 @@ public class LineBasedFrameDecoder extends ByteToMessageDecoder {
     }
 
     private void fail(final ChannelHandlerContext ctx, String length) {
+        // 这里只是触发业务handler的exceptionCaught方法，并不会throw抛出一个异常
         ctx.fireExceptionCaught(
                 new TooLongFrameException(
                         "frame length (" + length + ") exceeds the allowed maximum (" + maxLength + ')'));
