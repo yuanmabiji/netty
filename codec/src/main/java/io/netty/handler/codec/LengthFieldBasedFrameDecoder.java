@@ -348,6 +348,7 @@ public class LengthFieldBasedFrameDecoder extends ByteToMessageDecoder {
         this.lengthFieldOffset = lengthFieldOffset;
         this.lengthFieldLength = lengthFieldLength;
         this.lengthAdjustment = lengthAdjustment;
+        // 这个表示lengthField的结束位置即lengthField的开始位置加上lengthField的长度
         this.lengthFieldEndOffset = lengthFieldOffset + lengthFieldLength;
         this.initialBytesToStrip = initialBytesToStrip;
         this.failFast = failFast;
@@ -387,18 +388,22 @@ public class LengthFieldBasedFrameDecoder extends ByteToMessageDecoder {
     }
 
     private void exceededFrameLength(ByteBuf in, long frameLength) {
+        // 计算待丢弃的字节即frameLength减去ByteBuf的剩余可读字节数，因为一次可能丢弃不完所有要丢弃的字节即ByteBuf的可读字节数可能比frameLength还少
         long discard = frameLength - in.readableBytes();
         tooLongFrameLength = frameLength;
-
+        // ByteBuf的剩余可读字节数仍大于frameLength（但frameLength已经超过指定的最大字节数），此时直接将ByteBuf的readerIndex指针向右移动frameLength个位置跳过即可
         if (discard < 0) {
             // buffer contains more bytes then the frameLength so we can discard all now
             in.skipBytes((int) frameLength);
+        // 若frameLength大于ByteBuf的剩余可读字节数，说明这一次IO流之前（包括本次IO流）累积的字节数还不够frameLength，故此时需要开启丢弃模式，直接将ByteBuf的readerIndex指针向右移动到剩余可读字节数的末尾处
         } else {
             // Enter the discard mode and discard everything received so far.
             discardingTooLongFrame = true;
+            // 保存下一次要丢弃的字节数
             bytesToDiscard = discard;
             in.skipBytes(in.readableBytes());
         }
+        // 如果有必要则直接失败
         failIfNecessary(true);
     }
 
@@ -420,47 +425,55 @@ public class LengthFieldBasedFrameDecoder extends ByteToMessageDecoder {
      *                          be created.
      */
     protected Object decode(ChannelHandlerContext ctx, ByteBuf in) throws Exception {
+        // 默认为false，当frameLength大于maxFrameLength时，将会开启丢弃模式即discardingTooLongFrame=true
         if (discardingTooLongFrame) {
             discardingTooLongFrame(in);
         }
-
+        // 若ByteBuf的字节流小于lengthField的结束位置，那么不用解码，此时直接返回null
         if (in.readableBytes() < lengthFieldEndOffset) {
             return null;
         }
-
+        // ByteBuf的读指针加上lengthField的Offset才是真正的lengthFieldOffset
         int actualLengthFieldOffset = in.readerIndex() + lengthFieldOffset;
-        long frameLength = getUnadjustedFrameLength(in, actualLengthFieldOffset, lengthFieldLength, byteOrder);
-
+        // 获取还未调整的待解码内容的帧长度
+        long frameLength = getUnadjustedFrameLength(in, actualLengthFieldOffset, lengthFieldLength,  byteOrder);
+        // 如果待解码内容长度小于0，则需要抛出异常，同时需要将读指针readerIndex向右移动到lengthFieldEndOffset处，以免下次IO流的解码受影响
         if (frameLength < 0) {
             failOnNegativeLengthField(in, frameLength, lengthFieldEndOffset);
         }
-
+        // TODO
         frameLength += lengthAdjustment + lengthFieldEndOffset;
-
+        // 若待解码内容长度小于lengthFieldEndOffset，同样需要抛出异常，同时需要将读指针readerIndex向右移动到lengthFieldEndOffset处，以免下次IO流的解码受影响
         if (frameLength < lengthFieldEndOffset) {
             failOnFrameLengthLessThanLengthFieldEndOffset(in, frameLength, lengthFieldEndOffset);
         }
-
+        // 如果待解码内容长度大于指定的最大帧长度，则开启丢弃模式
         if (frameLength > maxFrameLength) {
             exceededFrameLength(in, frameLength);
             return null;
         }
 
         // never overflows because it's less than maxFrameLength
+        // 能执行到这里frameLength肯定是小于等于maxFrameLength，而maxFrameLength又是int类型，可以直接转
         int frameLengthInt = (int) frameLength;
+        // 若ByteBuf的累积字节数（剩余可读字节数）小于待解码内容长度，此时直接返回null，等待下一次IO流到来累积多点字节再继续解码
         if (in.readableBytes() < frameLengthInt) {
             return null;
         }
-
+        // 若待解码内容长度小于要跳过的初始字节数initialBytesToStrip，此时直接抛异常，并将ByteBuf的readerIndex指针向右移动frameLengthInt个字节
         if (initialBytesToStrip > frameLengthInt) {
             failOnFrameLengthLessThanInitialBytesToStrip(in, frameLength, initialBytesToStrip);
         }
+        // 因为待解码内容要跳过initialBytesToStrip个字节
         in.skipBytes(initialBytesToStrip);
 
         // extract frame
         int readerIndex = in.readerIndex();
+        // 将待解码内容长度减去要跳过的初始字节数得到真正待解码内容的字节长度actualFrameLength
         int actualFrameLength = frameLengthInt - initialBytesToStrip;
+        // 最终截取实际待解码内容的ByteBuf，因为这里不会改变ByteBuf的读写指针
         ByteBuf frame = extractFrame(ctx, in, readerIndex, actualFrameLength);
+        // 将ByteBuf的读指针设置为读取解码内容后的位置
         in.readerIndex(readerIndex + actualFrameLength);
         return frame;
     }
@@ -476,6 +489,7 @@ public class LengthFieldBasedFrameDecoder extends ByteToMessageDecoder {
     protected long getUnadjustedFrameLength(ByteBuf buf, int offset, int length, ByteOrder order) {
         buf = buf.order(order);
         long frameLength;
+        // 根据lengthField的长度来获取待解码内容的长度
         switch (length) {
         case 1:
             frameLength = buf.getUnsignedByte(offset);
@@ -500,6 +514,7 @@ public class LengthFieldBasedFrameDecoder extends ByteToMessageDecoder {
     }
 
     private void failIfNecessary(boolean firstDetectionOfTooLongFrame) {
+        // 若bytesToDiscard == 0则说明ByteBuf的剩余可读字节数刚好与要丢弃的字节数frameLength相等，刚好抵消即刚好把要丢弃的完整消息给丢弃完，此时需要关闭丢弃模式
         if (bytesToDiscard == 0) {
             // Reset to the initial state and tell the handlers that
             // the frame was too large.
@@ -509,6 +524,7 @@ public class LengthFieldBasedFrameDecoder extends ByteToMessageDecoder {
             if (!failFast || firstDetectionOfTooLongFrame) {
                 fail(tooLongFrameLength);
             }
+        // 若bytesToDiscard不等于0则说明ByteBuf的剩余可读字节数还不够用来丢弃，则要等待下一次IO流到来继续丢弃，此时若开启了failFast模式则先直接失败抛出异常
         } else {
             // Keep discarding and notify handlers if necessary.
             if (failFast && firstDetectionOfTooLongFrame) {
@@ -521,6 +537,8 @@ public class LengthFieldBasedFrameDecoder extends ByteToMessageDecoder {
      * Extract the sub-region of the specified buffer.
      */
     protected ByteBuf extractFrame(ChannelHandlerContext ctx, ByteBuf buffer, int index, int length) {
+        // 返回最终要截取的真正字节数的ByteBuf，注意retainedSlice方法不会改变读指针readerIndex或写指针writerIndex
+        // TODO 【Question36】这里为何要用不会改变读写指针的retainedSlice方法呢
         return buffer.retainedSlice(index, length);
     }
 
