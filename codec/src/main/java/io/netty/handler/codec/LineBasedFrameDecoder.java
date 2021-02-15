@@ -96,6 +96,7 @@ public class LineBasedFrameDecoder extends ByteToMessageDecoder {
      * @return  frame           the {@link ByteBuf} which represent the frame or {@code null} if no frame could
      *                          be created.
      */
+    // TODO 【Question33】当最后一行中没有行分隔符时怎么办？是不是永远都解码不了？还是说最后一场默认有行分隔符？
     protected Object decode(ChannelHandlerContext ctx, ByteBuf buffer) throws Exception {
         // 找到换行符的位置
         final int eol = findEndOfLine(buffer);
@@ -112,7 +113,9 @@ public class LineBasedFrameDecoder extends ByteToMessageDecoder {
                 if (length > maxLength) {
                     // 将ByteBuf的读指针向右移动delimLength + delimLength位
                     buffer.readerIndex(eol + delimLength);
-                    // 此时直接触发fireExceptionCaught，TODO 【Question31】此时触发的是触发业务handler的exceptionCaught方法？？?
+                    // 此时直接触发fireExceptionCaught
+                    // 【Question31】此时触发的是触发业务handler的exceptionCaught方法？？?
+                    // 【Anser31】是的
                     fail(ctx, length);
                     // 触发业务handler的exceptionCaught方法后，返回null，此时不会再触发业务handler的channelRead方法
                     return null;
@@ -137,6 +140,7 @@ public class LineBasedFrameDecoder extends ByteToMessageDecoder {
                 if (length > maxLength) {
                     discardedBytes = length;
                     buffer.readerIndex(buffer.writerIndex());
+                    // 开启丢弃模式
                     discarding = true;
                     offset = 0;
                     if (failFast) {
@@ -146,7 +150,7 @@ public class LineBasedFrameDecoder extends ByteToMessageDecoder {
                 // 最后返回null，待下次IO流到来时再继续解码
                 return null;
             }
-        // 执行到这里，说明前面没有换行符的情况下ByteBuf的长度已经超过maxLength并且已经被丢弃了
+        // 执行到这里，说明前面没有换行符的情况下ByteBuf的长度已经超过maxLength并且已经被丢弃了，已经开启了丢弃模式
         } else {
             // 当有一次IO流到来时，若此时继续读到换行符，那么则继续丢弃原来的那一行
             if (eol >= 0) {
@@ -155,6 +159,8 @@ public class LineBasedFrameDecoder extends ByteToMessageDecoder {
                 buffer.readerIndex(eol + delimLength);
                 discardedBytes = 0;
                 discarding = false;
+                // 这个!failFast跟前面非丢弃模式的failFast一一对应，如果failFast=true，则只要已超过maxLength就立即触发exceptionCaught；
+                // 如果failFast=false不会立即触发exceptionCaught，只要等到真正丢弃完一行后才触发exceptionCaught
                 if (!failFast) {
                     fail(ctx, length);
                 }
