@@ -127,6 +127,7 @@ public final class ChannelOutboundBuffer {
 
         // increment pending bytes after adding message to the unflushed arrays.
         // See https://github.com/netty/netty/issues/1619
+        // 若待写的消息长度大于高水位，则置不可写
         incrementPendingOutboundBytes(entry.pendingSize, false);
     }
 
@@ -147,9 +148,11 @@ public final class ChannelOutboundBuffer {
             }
             do {
                 flushed ++;
+                // TODO 【Question42】 netty将消息添加到channelOutboundBuffer不用判断高水位的么？还有下面这段逻辑什么时候会执行（有设置可写状态的逻辑）
                 if (!entry.promise.setUncancellable()) {
                     // Was cancelled so make sure we free up memory and notify about the freed bytes
                     int pending = entry.cancel();
+                    // 若channelOutboundBuffer的字节数少于低水位，则置unwritable=0即可写
                     decrementPendingOutboundBytes(pending, false, true);
                 }
                 entry = entry.next;
@@ -174,6 +177,7 @@ public final class ChannelOutboundBuffer {
         }
 
         long newWriteBufferSize = TOTAL_PENDING_SIZE_UPDATER.addAndGet(this, size);
+        // channelOutboundBuffer的字节数不能超过配置的高水位，默认高水位为64K字节，低水位为32K字节
         if (newWriteBufferSize > channel.config().getWriteBufferHighWaterMark()) {
             setUnwritable(invokeLater);
         }
@@ -193,6 +197,7 @@ public final class ChannelOutboundBuffer {
         }
 
         long newWriteBufferSize = TOTAL_PENDING_SIZE_UPDATER.addAndGet(this, -size);
+        //
         if (notifyWritability && newWriteBufferSize < channel.config().getWriteBufferLowWaterMark()) {
             setWritable(invokeLater);
         }
@@ -605,6 +610,7 @@ public final class ChannelOutboundBuffer {
             final int newValue = oldValue | 1;
             if (UNWRITABLE_UPDATER.compareAndSet(this, oldValue, newValue)) {
                 if (oldValue == 0 && newValue != 0) {
+                    // 若高水位有改变，则触发业务handler的channelWritabilityChanged方法
                     fireChannelWritabilityChanged(invokeLater);
                 }
                 break;

@@ -4,5 +4,6 @@
    如果子类解码时不足于解码成一个pojo业务对象直接return即可，此时ByteToMessageDecoder会累加字节流）； 3，将解析到的ByteBuf向下传播
 3，总之解码逻辑一定要考虑粘包拆包的情况，都是用成员变量来记录上一次的操作
 4，TODO 【Question34】LineBasedFrameDecoder等decoder如何使用？
-5，【重要】Netty的编码在主要在MessageToByteEncoder的write方法开始，写buffer队列主要在AbstractChannel的write方法
-6，
+5，【重要】Netty的编码在主要在MessageToByteEncoder的write方法开始，写buffer队列主要在AbstractChannel的write方法（将字节流缓冲到channelOutboundBuffer）
+         和flush方法（真正调用java原生channel将字节流写出去）
+6，TODO 【Question43】Netty的写数据的逻辑还没搞明白，比如高水位设置和低水位设置，还有写数据之前不用提前判断高水位的么？自己调试一遍
