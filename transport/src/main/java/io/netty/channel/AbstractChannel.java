@@ -858,6 +858,7 @@ public abstract class AbstractChannel extends DefaultAttributeMap implements Cha
             assertEventLoop();
 
             ChannelOutboundBuffer outboundBuffer = this.outboundBuffer;
+            // 在channel被关闭时，此时outboundBuffer为null，此时需要failFast和释放ByteBuf
             if (outboundBuffer == null) {
                 // If the outboundBuffer is null we know the channel was closed and so
                 // need to fail the future right away. If it is not null the handling of the rest
@@ -871,7 +872,10 @@ public abstract class AbstractChannel extends DefaultAttributeMap implements Cha
 
             int size;
             try {
+                // 若ByteBuf类型的msg不是直接内存，则将msg转化为直接内存，若不是PooledDirectBuffer或threadLocalDirectBuffer，
+                // 那么将不会新建directBuffer，因为创建directBuffer的代价太大，损耗性能
                 msg = filterOutboundMessage(msg);
+                // 计算ByteBuf里面的msg有多少字节流
                 size = pipeline.estimatorHandle().size(msg);
                 if (size < 0) {
                     size = 0;

@@ -219,7 +219,6 @@ public abstract class AbstractNioByteChannel extends AbstractNioChannel {
                 in.remove();
                 return 0;
             }
-
             final int localFlushedAmount = doWriteBytes(buf);
             if (localFlushedAmount > 0) {
                 in.progress(localFlushedAmount);

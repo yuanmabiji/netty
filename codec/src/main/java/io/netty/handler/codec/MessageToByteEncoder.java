@@ -99,18 +99,23 @@ public abstract class MessageToByteEncoder<I> extends ChannelOutboundHandlerAdap
     public void write(ChannelHandlerContext ctx, Object msg, ChannelPromise promise) throws Exception {
         ByteBuf buf = null;
         try {
+            // 匹配对象
             if (acceptOutboundMessage(msg)) {
                 @SuppressWarnings("unchecked")
                 I cast = (I) msg;
+                // 分配内存
                 buf = allocateBuffer(ctx, cast, preferDirect);
                 try {
+                    // 真正编码
                     encode(ctx, cast, buf);
                 } finally {
+                    // 这里如果msg是ReferenceCounted实现类比如ByteBuf，那么则需要进行release
                     ReferenceCountUtil.release(cast);
                 }
-
+                // 若buf有字节流说明编码有数据，则进行wirte方法传播，最终会传播到HEAD节点（write起始是TAIL节点）
                 if (buf.isReadable()) {
                     ctx.write(buf, promise);
+                // 若buf无字节流说明编码无数据，此时对ByteBuf进行释放
                 } else {
                     buf.release();
                     ctx.write(Unpooled.EMPTY_BUFFER, promise);
@@ -123,7 +128,10 @@ public abstract class MessageToByteEncoder<I> extends ChannelOutboundHandlerAdap
             throw e;
         } catch (Throwable e) {
             throw new EncoderException(e);
+        // 当前面的try逻辑有异常时，则需要finally块来保证释放内存
         } finally {
+            // 最后还要进行buf.release
+            // TODO 【Question38】 ReferenceCountUtil.release(cast);和buf.release();有啥区别？
             if (buf != null) {
                 buf.release();
             }

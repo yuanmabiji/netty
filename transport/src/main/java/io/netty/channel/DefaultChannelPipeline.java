@@ -1364,6 +1364,7 @@ public class DefaultChannelPipeline implements ChannelPipeline {
 
         @Override
         public void write(ChannelHandlerContext ctx, Object msg, ChannelPromise promise) {
+            // 写数据最终传播到Head节点这里
             unsafe.write(msg, promise);
         }
 

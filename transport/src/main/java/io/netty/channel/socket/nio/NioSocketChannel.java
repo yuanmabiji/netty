@@ -405,12 +405,16 @@ public class NioSocketChannel extends AbstractNioByteChannel implements io.netty
                     // to check if the total size of all the buffers is non-zero.
                     ByteBuffer buffer = nioBuffers[0];
                     int attemptedBytes = buffer.remaining();
+                    // TODO 【Question40】 若Linux的发送缓冲区满了，此时jdk的channel写数据写不进去会返回啥？返回<=0吗，然后最后返回WRITE_STATUS_SNDBUF_FULL
                     final int localWrittenBytes = ch.write(buffer);
                     if (localWrittenBytes <= 0) {
                         incompleteWrite(true);
                         return;
                     }
                     adjustMaxBytesPerGatheringWrite(attemptedBytes, localWrittenBytes, maxBytesPerGatheringWrite);
+                    // TODO 【Question41】 如果之前ChannelOutboundBuffer的addMessage方法调用时，写消息数据量大于高水位时，此时flush消息后消息已经低于高水位，
+                    //                    又是何时将不可写状态置为可写状态的呢即unwritable=0？
+                    // 【Answer41】 在AbstractChannel.AbstractUnsafe的flush方法调用outBoundBuffer.addFlush方法时?
                     in.removeBytes(localWrittenBytes);
                     --writeSpinCount;
                     break;

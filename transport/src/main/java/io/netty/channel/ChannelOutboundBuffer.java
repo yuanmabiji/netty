@@ -40,6 +40,7 @@ import java.util.concurrent.atomic.AtomicLongFieldUpdater;
 import static java.lang.Math.min;
 
 /**
+ * TODO 【Question39】Netty的自定义Channel（ChannelOutboundBuffer）写数据有高水位，那么JDK原生channel的写数据有高水位吗？
  * (Transport implementors only) an internal data structure used by {@link AbstractChannel} to store its pending
  * outbound write requests.
  * <p>
