@@ -34,6 +34,8 @@ import static java.lang.Math.min;
 
 /**
  * Light-weight object pool based on a thread-local stack.
+ * 如果对象池里面有相应对象，则不需要重新new一个对象出来，而是直接从对象池取出来即可
+ * 举个例子：PooledDirectByteBuf的newInstance方法新建ByteBuf时就用了对象池
  *
  * @param <T> the type of the pooled object
  */
@@ -204,11 +206,11 @@ public abstract class Recycler<T> {
     final int threadLocalSize() {
         return threadLocal.get().size;
     }
-
+    // 这个方法是给用户覆盖来新建具体对象的
     protected abstract T newObject(Handle<T> handle);
 
     public interface Handle<T> extends ObjectPool.Handle<T>  { }
-
+    // handler是用来负责对象的回收的
     private static final class DefaultHandle<T> implements Handle<T> {
         int lastRecycledId;
         int recycleId;

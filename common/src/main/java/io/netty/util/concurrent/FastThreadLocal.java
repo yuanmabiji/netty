@@ -23,6 +23,7 @@ import java.util.IdentityHashMap;
 import java.util.Set;
 
 /**
+ * 每一个FastThreadLocal实例都有一个唯一的索引值
  * A special variant of {@link ThreadLocal} that yields higher access performance when accessed from a
  * {@link FastThreadLocalThread}.
  * <p>
