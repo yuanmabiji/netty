@@ -18,13 +18,16 @@ package io.netty.handler.timeout;
 import io.netty.util.internal.PlatformDependent;
 
 /**
+ * 【设计模式之单例模式】
  * A {@link TimeoutException} raised by {@link ReadTimeoutHandler} when no data
  * was read within a certain period of time.
  */
 public final class ReadTimeoutException extends TimeoutException {
 
     private static final long serialVersionUID = 169287984113283421L;
-
+    // 【Question44】这里创建ReadTimeoutException为啥不用同步块？
+    // 【Answer44】因为INSTANCE是静态变量，在jvm加载类的时候会默认为ReadTimeoutException这个类加上同步块，即这个类的初始化是线程安全的，
+    //            而INSTANCE就是在初始化过程中被创建的
     public static final ReadTimeoutException INSTANCE = PlatformDependent.javaVersion() >= 7 ?
             new ReadTimeoutException(true) : new ReadTimeoutException();
 

@@ -20,6 +20,7 @@ import io.netty.util.internal.ObjectUtil;
 import java.nio.ByteOrder;
 
 /**
+ *【设计模式之装饰者模式】
  * A {@link ByteBuf} implementation that wraps another buffer to prevent a user from increasing or decreasing the
  * wrapped buffer's reference count.
  */

@@ -26,6 +26,7 @@ final class DefaultFutureListeners {
     @SuppressWarnings("unchecked")
     DefaultFutureListeners(
             GenericFutureListener<? extends Future<?>> first, GenericFutureListener<? extends Future<?>> second) {
+        // TODO 【Question45】 可以新建接口数组？然后这个接口数组可以装不同类型的子类？
         listeners = new GenericFutureListener[2];
         listeners[0] = first;
         listeners[1] = second;
@@ -39,14 +40,16 @@ final class DefaultFutureListeners {
     }
 
     public void add(GenericFutureListener<? extends Future<?>> l) {
+        // 新建的listeners数组引用也是指向成员数组listeners，因此对新建的数组引用添加元素也是对成员数组添加元素
         GenericFutureListener<? extends Future<?>>[] listeners = this.listeners;
         final int size = this.size;
+        // 扩容一倍
         if (size == listeners.length) {
             this.listeners = listeners = Arrays.copyOf(listeners, size << 1);
         }
         listeners[size] = l;
         this.size = size + 1;
-
+        // TODO 【Question46】 GenericProgressiveFutureListener是干嘛的？
         if (l instanceof GenericProgressiveFutureListener) {
             progressiveSize ++;
         }

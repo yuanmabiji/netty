@@ -31,6 +31,7 @@ import java.nio.channels.ScatteringByteChannel;
 import java.nio.charset.Charset;
 
 /**
+ *【设计模式之装饰者模式】
  * Wraps another {@link ByteBuf}.
  *
  * It's important that the {@link #readerIndex()} and {@link #writerIndex()} will not do any adjustments on the

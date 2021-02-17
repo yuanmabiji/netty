@@ -21,7 +21,7 @@ import io.netty.util.ResourceLeakTracker;
 import io.netty.util.internal.ObjectUtil;
 
 import java.nio.ByteOrder;
-
+// 【设计模式之装饰者模式】
 class SimpleLeakAwareByteBuf extends WrappedByteBuf {
 
     /**
@@ -100,6 +100,7 @@ class SimpleLeakAwareByteBuf extends WrappedByteBuf {
     @Override
     public boolean release() {
         if (super.release()) {
+            // 【设计模式之装饰模式之额外修饰】--closeLeak();
             closeLeak();
             return true;
         }

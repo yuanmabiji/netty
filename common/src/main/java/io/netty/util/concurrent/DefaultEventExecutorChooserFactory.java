@@ -28,7 +28,7 @@ public final class DefaultEventExecutorChooserFactory implements EventExecutorCh
     public static final DefaultEventExecutorChooserFactory INSTANCE = new DefaultEventExecutorChooserFactory();
 
     private DefaultEventExecutorChooserFactory() { }
-
+    // 【设计模式之策略模式】
     @SuppressWarnings("unchecked")
     @Override
     public EventExecutorChooser newChooser(EventExecutor[] executors) {

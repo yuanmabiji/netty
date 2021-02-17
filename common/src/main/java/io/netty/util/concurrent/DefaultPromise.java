@@ -198,7 +198,7 @@ public class DefaultPromise<V> extends AbstractFuture<V> implements Promise<V> {
                 addListener0(listener);
             }
         }
-
+        // 如果异步操作已经完成了，那么直接由调用线程来同步notifyListeners，否则由异步线程（IO线程）来notifyListeners
         if (isDone()) {
             notifyListeners();
         }
@@ -583,10 +583,15 @@ public class DefaultPromise<V> extends AbstractFuture<V> implements Promise<V> {
     }
 
     private void addListener0(GenericFutureListener<? extends Future<? super V>> listener) {
+        // 第一次调用时，进入该分支，将GenericFutureListener对象赋给listeners
         if (listeners == null) {
             listeners = listener;
+        // 第三次及以后调用时进入该分支，因为此时listeners已经是DefaultFutureListeners类型，因此把新的listener对象添加进DefaultFutureListeners的成员数组即可
         } else if (listeners instanceof DefaultFutureListeners) {
             ((DefaultFutureListeners) listeners).add(listener);
+        // 第二次调用时进入该分支，因为listeners不属于DefaultFutureListeners类型，
+        // 因此把第一次添加的listeners（属于GenericFutureListener类型）和新添加的listener都包装进DefaultFutureListeners的成员数组（GenericFutureListener类型），
+        // 然后返回一个新建的DefaultFutureListeners对象给DefaultPromise的成员变量listeners对象
         } else {
             listeners = new DefaultFutureListeners((GenericFutureListener<?>) listeners, listener);
         }
