@@ -37,7 +37,8 @@ import static java.util.concurrent.TimeUnit.MILLISECONDS;
  * 【被观察者】是promise(future)，promise作为被观察者拥有了观察者集合listeners，
  *           当被观察者promise觉得适当的时候比如完成连接操作就会遍历观察者集合，然后回调观察者的operationCompelete方法，
  *           1）当添加观察者集合时，如果异步线程（IO线程）还未完成相关操作，此时由异步线程（IO线程）回调观察者的operationCompelete方法；
- *           2）当添加观察者集合时，如果异步线程（IO线程）已经完成相关操作，此时由当前线程（一般指业务线程）直接立即回调观察者的operationCompelete方法
+ *           2）当添加观察者集合时，如果异步线程（IO线程）已经完成相关操作，此时由当前线程（一般指业务线程）也是直接将观察者的operationCompelete方法
+ *           封装成RunnableTask扔到IO线程去执行，当NioEventLoop的run方法轮询到runAllTasks时再执行回调
  * 【观察者】是GenericFutureListener或DefaultFutureListener，可由业务线程或IO线程添加到被观察者promise的listeners集合中.
  * 【重要知识点】 1，一般被观察者promise新建后，会直接返回给调用方以方便调用线程方添加观察者
  *             2，那么异步线程又是如何回调观察者的operationCompelete回调方法呢？
@@ -56,6 +57,8 @@ import static java.util.concurrent.TimeUnit.MILLISECONDS;
  *                    后可以往里面添加各种观察者，同时future作为writeAndFlush的方法参数一直传递到flush方法将数据写出去后，然后再通过传递过来的
  *                    被观察者future(promise)拿到观察者来回调相关回调方法
  * TODO 【Question47】 当多个观察者listener被嵌套时，DefaultPromise好像有用到堆栈，这方面的逻辑是怎样的？
+ *
+ * TODO 【Question48】 Promise是可写的future，体现在哪里？
  *
  * @param <V>
  */
@@ -413,6 +416,7 @@ public class DefaultPromise<V> extends AbstractFuture<V> implements Promise<V> {
             return true;
         }
         return false;
+
     }
 
     @Override

@@ -40,6 +40,13 @@ import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicReferenceFieldUpdater;
 
 /**
+ * 【设计模式之责任链模式】
+ * 【处理接口】 ChannelHandler的各种方法
+ * 【创建链，添加删除处理器】DefaultChannelPipeline的add,remove等方法
+ * 【上下文】ChannelHandlerContext
+ * 【责任终止机制】在handler的各种方法比如channelRead方法不调用ctx.fireChannelRead方法即可终止（只要一个handler集成ChannelHandlerAdapter，即使不覆盖相关方法，默认是向下传播的），
+ * 还有一个常用的是调用处理方法是返回true or false来决定要不要调用下一个handler
+ * TODO 【Question49】Netty的pipeline是如何切换到下一个handler的？
  * The default {@link ChannelPipeline} implementation.  It is usually created
  * by a {@link Channel} implementation when the {@link Channel} is created.
  */

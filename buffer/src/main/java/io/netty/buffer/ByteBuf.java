@@ -2131,6 +2131,7 @@ public abstract class ByteBuf implements ReferenceCounted, Comparable<ByteBuf> {
     public abstract int forEachByte(ByteProcessor processor);
 
     /**
+     * 【设计模式之迭代器模式】
      * Iterates over the specified area of this buffer with the specified {@code processor} in ascending order.
      * (i.e. {@code index}, {@code (index + 1)},  .. {@code (index + length - 1)})
      *
