@@ -46,6 +46,12 @@ import static java.util.concurrent.TimeUnit.MILLISECONDS;
  *                异步线程切换时，此时把相关方法调用封装成RunnableTask扔给异步线程，同时该方法调用的参数必定有一个被观察者promise，
  *                当异步线程完成该方法调用逻辑时，此时拿到方法参数传递过来的被观察者promise，最后拿到被观察者里面保存的各个观察者listener，
  *                遍历listeners集合，最终回调每个观察者的operationCompelete回调方法。
+ *             3，当异步线程或当前业务线程回调观察者的operationCompelete回调方法时，说明相关操作已经由异步线程（IO线程）完成，但是此时怎么判断
+ *                相关操作是否成功呢？
+ *                因为当异步线程完成相关操作时，会记录这个操作逻辑是否成功在被观察者promise，我们通过future.isSuccess方法即可判断操作是否成功。
+ *                因此，当回调观察者的operationCompelete回调方法时，我们只要将被观察者promise(future)作为operationCompelete方法的参数传递进去
+ *                即可，当operationCompelete方法被回调时，我们拿到传递进来的promise(future),直接通过future.isSuccess方法判断操作是否成功来
+ *                进行不同业务逻辑的编写。
  * 【观察者模式具体例子】 writeAndFlush方法就是一个观察者模式的例子，首先writeAndFlush方法调用后会返回一个被观察者future，我们拿到被观察者future
  *                    后可以往里面添加各种观察者，同时future作为writeAndFlush的方法参数一直传递到flush方法将数据写出去后，然后再通过传递过来的
  *                    被观察者future(promise)拿到观察者来回调相关回调方法
