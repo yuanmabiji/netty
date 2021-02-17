@@ -55,6 +55,7 @@ import static java.util.concurrent.TimeUnit.MILLISECONDS;
  * 【观察者模式具体例子】 writeAndFlush方法就是一个观察者模式的例子，首先writeAndFlush方法调用后会返回一个被观察者future，我们拿到被观察者future
  *                    后可以往里面添加各种观察者，同时future作为writeAndFlush的方法参数一直传递到flush方法将数据写出去后，然后再通过传递过来的
  *                    被观察者future(promise)拿到观察者来回调相关回调方法
+ * TODO 【Question47】 当多个观察者listener被嵌套时，DefaultPromise好像有用到堆栈，这方面的逻辑是怎样的？
  *
  * @param <V>
  */
