@@ -39,6 +39,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 
 /**
+ * TODO 【Question50】 服务端启用多个端口或客户端循环多次连接服务端，此时服务端或客户端创建的IO线程是怎样的？这里面的循环逻辑是怎样的呢
  * {@link Bootstrap} sub-class which allows easy bootstrap of {@link ServerChannel}
  *
  */
