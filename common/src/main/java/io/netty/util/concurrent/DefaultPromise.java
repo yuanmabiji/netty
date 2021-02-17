@@ -32,6 +32,26 @@ import java.util.concurrent.atomic.AtomicReferenceFieldUpdater;
 import static io.netty.util.internal.ObjectUtil.checkNotNull;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
 
+/**
+ * 【设计模式之观察者模式】
+ * 【被观察者】是promise(future)，promise作为被观察者拥有了观察者集合listeners，
+ *           当被观察者promise觉得适当的时候比如完成连接操作就会遍历观察者集合，然后回调观察者的operationCompelete方法，
+ *           1）当添加观察者集合时，如果异步线程（IO线程）还未完成相关操作，此时由异步线程（IO线程）回调观察者的operationCompelete方法；
+ *           2）当添加观察者集合时，如果异步线程（IO线程）已经完成相关操作，此时由当前线程（一般指业务线程）直接立即回调观察者的operationCompelete方法
+ * 【观察者】是GenericFutureListener或DefaultFutureListener，可由业务线程或IO线程添加到被观察者promise的listeners集合中.
+ * 【重要知识点】 1，一般被观察者promise新建后，会直接返回给调用方以方便调用线程方添加观察者
+ *             2，那么异步线程又是如何回调观察者的operationCompelete回调方法呢？
+ *                因为观察者是保存在被观察者promise的listeners集合里面，若异步线程要回调观察者的operationCompelete回调方法，
+ *                那么异步线程首先要拿到被观察者promise，因此，被观察者promise这个引用只有作为调用方法的参数一直传递，直到需要
+ *                异步线程切换时，此时把相关方法调用封装成RunnableTask扔给异步线程，同时该方法调用的参数必定有一个被观察者promise，
+ *                当异步线程完成该方法调用逻辑时，此时拿到方法参数传递过来的被观察者promise，最后拿到被观察者里面保存的各个观察者listener，
+ *                遍历listeners集合，最终回调每个观察者的operationCompelete回调方法。
+ * 【观察者模式具体例子】 writeAndFlush方法就是一个观察者模式的例子，首先writeAndFlush方法调用后会返回一个被观察者future，我们拿到被观察者future
+ *                    后可以往里面添加各种观察者，同时future作为writeAndFlush的方法参数一直传递到flush方法将数据写出去后，然后再通过传递过来的
+ *                    被观察者future(promise)拿到观察者来回调相关回调方法
+ *
+ * @param <V>
+ */
 public class DefaultPromise<V> extends AbstractFuture<V> implements Promise<V> {
     private static final InternalLogger logger = InternalLoggerFactory.getInstance(DefaultPromise.class);
     private static final InternalLogger rejectedExecutionLogger =
